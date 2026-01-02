@@ -1,0 +1,36 @@
+{
+  "name": "bedrock-chatbot-backend",
+  "version": "0.1.0",
+  "bin": {
+    "bedrock-chatbot-backend": "bin/bedrock-chatbot-backend.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "diff": "cdk diff",
+    "destroy": "cdk destroy",
+    "bootstrap": "cdk bootstrap",
+    "validate": "npm run build && npm run synth && npm run test"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "25.0.3",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "aws-cdk": "2.1100.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3",
+    "fast-check": "^4.5.2"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.233.0",
+    "constructs": "^10.4.4",
+    "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",
+    "cdk-nag": "^2.37.55",
+    "source-map-support": "^0.5.21"
+  }
+}
