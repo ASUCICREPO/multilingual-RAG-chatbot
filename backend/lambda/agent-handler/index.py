@@ -162,15 +162,15 @@ def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language:
     # Language instruction
     language_instruction = ""
     if language == 'spanish':
-        language_instruction = "Respond in Spanish. "
+        language_instruction = "Responde en español. "
     
     if not sources:
-        # Direct prompt for technical users without RAG context
-        return f"""You are a technical assistant for informed users. Provide direct, concise answers without unnecessary explanations. Focus on actionable information and specific details. {language_instruction}
-
-Question: {user_message}
-
-Provide a clear, technical response."""
+        # No sources available - should not answer
+        no_source_message = {
+            'english': "I can only provide information based on the available source documents. No relevant sources were found for your question. Please try rephrasing your question or ask about topics covered in the knowledge base.",
+            'spanish': "Solo puedo proporcionar información basada en los documentos fuente disponibles. No se encontraron fuentes relevantes para su pregunta. Por favor, reformule su pregunta o pregunte sobre temas cubiertos en la base de conocimientos."
+        }
+        return f"""You must respond with exactly this message: "{no_source_message[language]}" """
     
     context_parts = []
     for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
@@ -179,22 +179,22 @@ Provide a clear, technical response."""
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a technical assistant for informed users working with company procedures and technical practices. Your users are knowledgeable professionals who prefer direct, concise responses. {language_instruction}
+    rag_prompt = f"""You are a technical assistant for unemployment insurance SMEs and technical professionals. Your users prefer concise, direct responses. Be brief and to-the-point. Avoid verbose explanations. {language_instruction}
 
-Guidelines:
-- Be direct and to-the-point
-- Assume technical competency 
-- Focus on actionable information
-- Avoid unnecessary explanations of basic concepts
-- Reference specific procedures when available
-- If information is missing from context, state it clearly
+CRITICAL INSTRUCTIONS:
+- ONLY use information from the Technical References below
+- Do NOT add any information not explicitly stated in the references
+- If the question cannot be answered from the references, say "This information is not available in the provided sources"
+- Be direct and concise
+- Focus on key points only
+- Cite which reference number you're using
 
 Technical References:
 {context}
 
 Question: {user_message}
 
-Provide a concise, technical response based on the references above."""
+Provide a brief response using ONLY the information from the references above."""
 
     return rag_prompt
 
@@ -210,21 +210,13 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
             prompt = build_rag_prompt(chat_request.message, sources, chat_request.language)
             logger.info(f"Using RAG prompt with {len(sources)} technical references, language: {chat_request.language}")
         else:
-            # Direct technical prompt without RAG - include language instruction
-            language_instruction = ""
-            if chat_request.language == 'spanish':
-                language_instruction = "Respond in Spanish. "
-            
-            prompt = f"""You are a technical assistant for informed professionals. Provide direct, concise answers focused on actionable information. Avoid verbose explanations unless specifically requested. {language_instruction}
-
-Question: {chat_request.message}
-
-Response:"""
-            logger.info(f"Using direct technical prompt (no RAG context available), language: {chat_request.language}")
+            # No sources - use the no-source prompt from build_rag_prompt
+            prompt = build_rag_prompt(chat_request.message, sources, chat_request.language)
+            logger.info(f"No sources available for query, language: {chat_request.language}")
         
         logger.info(f"Invoking Bedrock model {MODEL_ID}")
         
-        # Prepare the request body for Nova 2 Lite - optimized for technical users
+        # Prepare the request body for Nova 2 Lite - optimized for concise technical responses
         request_body = {
             "messages": [
                 {
@@ -237,9 +229,9 @@ Response:"""
                 }
             ],
             "inferenceConfig": {
-                "maxTokens": MAX_TOKENS,
-                "temperature": TEMPERATURE,  # Lower temperature for more focused, direct responses
-                "topP": 0.9,  # Slightly focused sampling for technical accuracy
+                "maxTokens": 1024,  # Reduced from 2048 to encourage brevity
+                "temperature": 0.2,  # Reduced from 0.3 for more focused responses
+                "topP": 0.8,  # Reduced from 0.9 for more focused sampling
             }
         }
         
