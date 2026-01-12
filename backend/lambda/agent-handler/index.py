@@ -34,10 +34,23 @@ USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
 class ChatRequest:
     """Data model for chat requests"""
     
-    def __init__(self, message: str, session_id: Optional[str] = None, user_id: Optional[str] = None):
+    def __init__(self, message: str, session_id: Optional[str] = None, user_id: Optional[str] = None, language: Optional[str] = None):
         self.message = message
         self.session_id = session_id or str(uuid.uuid4())
         self.user_id = user_id or 'anonymous'
+        self.language = self._validate_language(language)
+        
+    def _validate_language(self, language: Optional[str]) -> str:
+        """Validate language parameter - only accept 'english' or 'spanish'"""
+        if not language:
+            return 'english'
+        
+        language = language.lower().strip()
+        
+        if language in ['english', 'spanish']:
+            return language
+        
+        return 'english'  # Default fallback
         
     @classmethod
     def from_event(cls, event: Dict[str, Any]) -> 'ChatRequest':
@@ -47,7 +60,8 @@ class ChatRequest:
             return cls(
                 message=body.get('message', ''),
                 session_id=body.get('sessionId'),
-                user_id=event.get('requestContext', {}).get('authorizer', {}).get('userId')
+                user_id=event.get('requestContext', {}).get('authorizer', {}).get('userId'),
+                language=body.get('language')
             )
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to parse request: {e}")
