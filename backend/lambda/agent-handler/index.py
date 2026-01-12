@@ -156,11 +156,17 @@ def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
         return []
 
 
-def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]]) -> str:
+def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language: str = 'english') -> str:
     """Build a RAG prompt with retrieved context for technical users"""
+    
+    # Language instruction
+    language_instruction = ""
+    if language == 'spanish':
+        language_instruction = "Respond in Spanish. "
+    
     if not sources:
         # Direct prompt for technical users without RAG context
-        return f"""You are a technical assistant for informed users. Provide direct, concise answers without unnecessary explanations. Focus on actionable information and specific details.
+        return f"""You are a technical assistant for informed users. Provide direct, concise answers without unnecessary explanations. Focus on actionable information and specific details. {language_instruction}
 
 Question: {user_message}
 
@@ -173,7 +179,7 @@ Provide a clear, technical response."""
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a technical assistant for informed users working with company procedures and technical practices. Your users are knowledgeable professionals who prefer direct, concise responses.
+    rag_prompt = f"""You are a technical assistant for informed users working with company procedures and technical practices. Your users are knowledgeable professionals who prefer direct, concise responses. {language_instruction}
 
 Guidelines:
 - Be direct and to-the-point
@@ -199,18 +205,22 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
         # Retrieve from Knowledge Base if enabled
         sources = retrieve_from_knowledge_base(chat_request.message)
         
-        # Build the prompt (with or without RAG context)
+        # Build the prompt (with or without RAG context) including language preference
         if sources:
-            prompt = build_rag_prompt(chat_request.message, sources)
-            logger.info(f"Using RAG prompt with {len(sources)} technical references")
+            prompt = build_rag_prompt(chat_request.message, sources, chat_request.language)
+            logger.info(f"Using RAG prompt with {len(sources)} technical references, language: {chat_request.language}")
         else:
-            # Direct technical prompt without RAG
-            prompt = f"""You are a technical assistant for informed professionals. Provide direct, concise answers focused on actionable information. Avoid verbose explanations unless specifically requested.
+            # Direct technical prompt without RAG - include language instruction
+            language_instruction = ""
+            if chat_request.language == 'spanish':
+                language_instruction = "Respond in Spanish. "
+            
+            prompt = f"""You are a technical assistant for informed professionals. Provide direct, concise answers focused on actionable information. Avoid verbose explanations unless specifically requested. {language_instruction}
 
 Question: {chat_request.message}
 
 Response:"""
-            logger.info("Using direct technical prompt (no RAG context available)")
+            logger.info(f"Using direct technical prompt (no RAG context available), language: {chat_request.language}")
         
         logger.info(f"Invoking Bedrock model {MODEL_ID}")
         
