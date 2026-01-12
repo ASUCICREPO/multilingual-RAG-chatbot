@@ -13,6 +13,11 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import { NagSuppressions } from 'cdk-nag';
 
 export class BedrockChatbotBackendStack extends cdk.Stack {
+  // ⚠️  WARNING: ALL RESOURCES HAVE DESTROY REMOVAL POLICY
+  // This stack is configured for easy cleanup - all resources will be DESTROYED on stack deletion
+  // This includes S3 buckets, Bedrock Knowledge Bases, vector embeddings, and user data
+  // Use with caution in production environments!
+  
   // Public properties for cross-stack references
   public readonly documentSourceBucket: s3.Bucket;
   public readonly vectorBucket: s3vectors.CfnVectorBucket;
@@ -60,8 +65,8 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           ],
         },
       ],
-      removalPolicy: isDevelopment ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
-      autoDeleteObjects: isDevelopment,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Always destroy for easy cleanup
+      autoDeleteObjects: true, // Always auto-delete objects
     });
 
     // ========================================
@@ -72,6 +77,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
     this.vectorBucket = new s3vectors.CfnVectorBucket(this, 'VectorBucket', {
       vectorBucketName: `bedrock-chatbot-vectors-${environment}-${this.account}`,
     });
+
+    // Apply DESTROY removal policy to S3 Vector Bucket
+    this.vectorBucket.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // S3 Vector Index - index for the vector bucket used by Bedrock Knowledge Base
     this.vectorIndex = new s3vectors.CfnIndex(this, 'VectorIndex', {
@@ -88,6 +96,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       }
     });
 
+    // Apply DESTROY removal policy to S3 Vector Index
+    this.vectorIndex.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
     // ========================================
     // IAM ROLES AND POLICIES
     // ========================================
@@ -101,6 +112,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
       ],
     });
+
+    // Apply DESTROY removal policy to Bedrock Service Role
+    this.bedrockServiceRole.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // Create a comprehensive managed policy for S3 Vectors and S3 access
     const bedrockServicePolicy = new iam.ManagedPolicy(this, 'BedrockServicePolicy', {
@@ -141,6 +155,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         }),
       ],
     });
+
+    // Apply DESTROY removal policy to Bedrock Service Policy
+    bedrockServicePolicy.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // Attach the managed policy to the role
     this.bedrockServiceRole.addManagedPolicy(bedrockServicePolicy);
@@ -184,6 +201,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       },
     });
 
+    // Apply DESTROY removal policy to Knowledge Base
+    this.knowledgeBase.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
     // Add explicit dependencies to ensure proper creation order
     this.knowledgeBase.addDependency(this.vectorBucket);
     this.knowledgeBase.addDependency(this.vectorIndex);
@@ -216,6 +236,9 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       },
     });
 
+    // Apply DESTROY removal policy to Data Source
+    this.dataSource.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
     // ========================================
     // LAMBDA AGENT HANDLER
     // ========================================
@@ -239,10 +262,13 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       logGroup: new logs.LogGroup(this, 'AgentHandlerLogGroup', {
         logGroupName: `/aws/lambda/bedrock-chatbot-handler-${environment}`,
         retention: logs.RetentionDays.ONE_WEEK,
-        removalPolicy: isDevelopment ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
+        removalPolicy: cdk.RemovalPolicy.DESTROY, // Always destroy for easy cleanup
       }),
       description: 'Lambda function for processing chat requests through direct Bedrock API with Knowledge Base',
     });
+
+    // Apply DESTROY removal policy to Lambda function
+    this.agentHandlerFunction.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // Grant Lambda permissions to invoke Bedrock models and retrieve from Knowledge Base
     this.agentHandlerFunction.addToRolePolicy(
@@ -338,7 +364,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         otp: true,
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      removalPolicy: isDevelopment ? cdk.RemovalPolicy.DESTROY : cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Always destroy for easy cleanup
     });
 
     // Cognito User Pool Client
@@ -361,12 +387,8 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           cognito.OAuthScope.OPENID,
           cognito.OAuthScope.PROFILE,
         ],
-        callbackUrls: isDevelopment
-          ? ['http://localhost:3000/callback', 'https://localhost:3000/callback']
-          : ['https://your-domain.com/callback'], // Update with actual domain
-        logoutUrls: isDevelopment
-          ? ['http://localhost:3000', 'https://localhost:3000']
-          : ['https://your-domain.com'], // Update with actual domain
+        callbackUrls: ['http://localhost:3000/callback'],
+        logoutUrls: ['http://localhost:3000'],
       },
       preventUserExistenceErrors: true,
       accessTokenValidity: cdk.Duration.hours(1),
@@ -417,9 +439,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       apiName: `bedrock-chatbot-api-${environment}`,
       description: 'HTTP API for Bedrock Chatbot with Cognito authentication',
       corsPreflight: {
-        allowOrigins: isDevelopment
-          ? ['http://localhost:3000', 'https://localhost:3000']
-          : ['https://your-domain.com'], // Update with actual domain
+        allowOrigins: ['*'], // Allow all origins for easier development and testing
         allowMethods: [
           apigateway.CorsHttpMethod.GET,
           apigateway.CorsHttpMethod.POST,
@@ -478,6 +498,9 @@ def handler(event, context):
       timeout: cdk.Duration.seconds(10),
       description: 'Health check endpoint for the chatbot API',
     });
+
+    // Apply DESTROY removal policy to Health Check function
+    healthCheckFunction.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // Chat endpoint with authentication
     this.httpApi.addRoutes({
