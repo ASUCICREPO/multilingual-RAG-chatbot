@@ -1,7 +1,7 @@
 import Header from './components/Header';
 import Hero from './components/Hero';
 import ContentCards from './components/ContentCards';
-import FeedbackWidget from './components/FeedbackWidget';
+import ChatBot from './components/ChatBot';
 
 export default function Home() {
   return (
@@ -9,7 +9,7 @@ export default function Home() {
       <Header />
       <Hero />
       <ContentCards />
-      <FeedbackWidget />
+      <ChatBot />
     </div>
   );
 }
