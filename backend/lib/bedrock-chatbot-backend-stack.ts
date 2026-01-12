@@ -279,7 +279,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           'bedrock-agent-runtime:Retrieve',
         ],
         resources: [
-          `arn:aws:bedrock:${this.region}::foundation-model/global.amazon.nova-2-lite-v1:0`,
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/global.amazon.nova-2-lite-v1:0`,
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-*`,
           this.knowledgeBase.attrKnowledgeBaseArn,
         ],
