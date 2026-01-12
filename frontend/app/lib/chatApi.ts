@@ -11,10 +11,10 @@ export interface ChatResponse {
   response: string;
   sessionId: string;
   sources: Array<{
-    excerpt: string;
+    document: string;
     score: number;
     location: string;
-    metadata: any;
+    downloadUrl: string | null;
   }>;
   timestamp: string;
 }
@@ -83,6 +83,100 @@ export class ChatAPI {
       console.error('Chat API error:', error);
       throw error;
     }
+  }
+
+  async viewDocument(documentPath: string): Promise<void> {
+    try {
+      const config = getConfig();
+      
+      // Get authentication token
+      const token = await this.authService.getToken();
+
+      // Make API call to get document (backend will handle view vs download based on file type)
+      const response = await fetch(`${config.api.baseUrl}/document?path=${encodeURIComponent(documentPath)}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Token expired, clear it and retry once
+          this.authService.clearToken();
+          const newToken = await this.authService.getToken();
+          
+          const retryResponse = await fetch(`${config.api.baseUrl}/document?path=${encodeURIComponent(documentPath)}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${newToken}`
+            }
+          });
+
+          if (!retryResponse.ok) {
+            throw new Error(`Document access failed after retry: ${retryResponse.status}`);
+          }
+
+          await this.handleDocumentResponse(retryResponse);
+          return;
+        }
+        
+        throw new Error(`Document access failed: ${response.status}`);
+      }
+
+      await this.handleDocumentResponse(response);
+    } catch (error) {
+      console.error('Document access error:', error);
+      throw error;
+    }
+  }
+
+  private async handleDocumentResponse(response: Response): Promise<void> {
+    const contentDisposition = response.headers.get('Content-Disposition');
+    const contentType = response.headers.get('Content-Type') || '';
+    
+    console.log('Content-Disposition header:', contentDisposition);
+    console.log('Content-Type header:', contentType);
+    
+    // Extract filename from Content-Disposition header
+    let filename = 'document';
+    if (contentDisposition) {
+      // Simple regex to extract filename from: attachment; filename="Requirements.docx"
+      const match = contentDisposition.match(/filename="([^"]+)"/);
+      console.log('Regex match result:', match);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+    
+    console.log('Final filename:', filename);
+    
+    const blob = await response.blob();
+    
+    // Check if it's a PDF (should open in browser)
+    if (contentType.includes('application/pdf') && !contentDisposition?.includes('attachment')) {
+      // PDF - open in new tab for viewing
+      const url = URL.createObjectURL(blob);
+      const newWindow = window.open(url, '_blank');
+      if (!newWindow) {
+        // Fallback if popup was blocked
+        window.location.href = url;
+      }
+    } else {
+      // Other files (Word docs, etc.) - trigger download with correct filename
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async getToken(): Promise<string> {
+    return await this.authService.getToken();
   }
 
   async healthCheck(): Promise<boolean> {

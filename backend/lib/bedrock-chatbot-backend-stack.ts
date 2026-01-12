@@ -276,6 +276,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         effect: iam.Effect.ALLOW,
         actions: [
           'bedrock:InvokeModel',
+          'bedrock:Retrieve',  // Add this permission for Knowledge Base retrieval
           'bedrock-agent-runtime:Retrieve',
         ],
         resources: [
@@ -287,6 +288,20 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-*`,
           // Knowledge Base
           this.knowledgeBase.attrKnowledgeBaseArn,
+        ],
+      })
+    );
+
+    // Grant Lambda permissions to read documents from S3 for proxy downloads
+    this.agentHandlerFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          's3:GetObject',
+          's3:GetObjectVersion',
+        ],
+        resources: [
+          `${this.documentSourceBucket.bucketArn}/*`,
         ],
       })
     );
@@ -511,6 +526,14 @@ def handler(event, context):
     this.httpApi.addRoutes({
       path: '/chat',
       methods: [apigateway.HttpMethod.POST],
+      integration: lambdaIntegration,
+      authorizer: this.cognitoAuthorizer,
+    });
+
+    // Document download endpoint with authentication
+    this.httpApi.addRoutes({
+      path: '/document',
+      methods: [apigateway.HttpMethod.GET],
       integration: lambdaIntegration,
       authorizer: this.cognitoAuthorizer,
     });

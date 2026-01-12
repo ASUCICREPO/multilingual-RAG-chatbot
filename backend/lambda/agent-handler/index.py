@@ -11,6 +11,8 @@ import os
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, List
+from urllib.parse import unquote, urlparse
+import base64
 
 import boto3
 from botocore.exceptions import ClientError
@@ -22,6 +24,7 @@ logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 # Initialize AWS clients
 bedrock_runtime = boto3.client('bedrock-runtime')
 bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
+s3_client = boto3.client('s3')
 
 # Environment variables
 MODEL_ID = os.getenv('MODEL_ID', 'global.amazon.nova-2-lite-v1:0')
@@ -118,11 +121,13 @@ def validate_request(chat_request: ChatRequest) -> None:
 def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
     """Retrieve relevant documents from Knowledge Base"""
     if not USE_KNOWLEDGE_BASE or not KNOWLEDGE_BASE_ID:
+        logger.warning("Knowledge Base not configured - USE_KNOWLEDGE_BASE or KNOWLEDGE_BASE_ID missing")
         return []
     
     try:
-        logger.info(f"Retrieving from Knowledge Base: {KNOWLEDGE_BASE_ID}")
+        logger.info(f"Retrieving from Knowledge Base: {KNOWLEDGE_BASE_ID} with query: {query[:100]}...")
         
+        # Simplified retrieval configuration - remove potentially problematic overrideSearchType
         response = bedrock_agent_runtime.retrieve(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
             retrievalQuery={
@@ -130,29 +135,51 @@ def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 5,  # Adjust as needed
-                    'overrideSearchType': 'HYBRID'  # SEMANTIC, HYBRID
+                    'numberOfResults': 10,  # Increased from 5 to get more results
                 }
             }
         )
         
-        sources = []
-        for result in response.get('retrievalResults', []):
-            sources.append({
-                'content': result.get('content', {}).get('text', ''),
-                'score': result.get('score', 0.0),
-                'location': result.get('location', {}).get('s3Location', {}).get('uri', ''),
-                'metadata': result.get('metadata', {})
-            })
+        logger.info(f"Raw retrieval response: {json.dumps(response, default=str)[:500]}...")
         
-        logger.info(f"Retrieved {len(sources)} sources from Knowledge Base")
+        sources = []
+        retrieval_results = response.get('retrievalResults', [])
+        logger.info(f"Found {len(retrieval_results)} retrieval results")
+        
+        for i, result in enumerate(retrieval_results):
+            logger.info(f"Processing result {i}: {json.dumps(result, default=str)[:200]}...")
+            
+            content_text = ''
+            if 'content' in result and 'text' in result['content']:
+                content_text = result['content']['text']
+            
+            location_uri = ''
+            if 'location' in result:
+                if 's3Location' in result['location'] and 'uri' in result['location']['s3Location']:
+                    location_uri = result['location']['s3Location']['uri']
+            
+            source = {
+                'content': content_text,
+                'score': result.get('score', 0.0),
+                'location': location_uri,
+                'metadata': result.get('metadata', {})
+            }
+            
+            logger.info(f"Processed source {i}: content_length={len(content_text)}, score={source['score']}, location={location_uri}")
+            sources.append(source)
+        
+        logger.info(f"Successfully retrieved {len(sources)} sources from Knowledge Base")
         return sources
         
     except ClientError as e:
-        logger.error(f"Knowledge Base retrieval error: {e}")
+        logger.error(f"Knowledge Base retrieval ClientError: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
+        logger.error(f"Full error response: {e.response}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error in Knowledge Base retrieval: {e}")
+        logger.error(f"Unexpected error in Knowledge Base retrieval: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 
@@ -172,29 +199,51 @@ def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language:
         }
         return f"""You must respond with exactly this message: "{no_source_message[language]}" """
     
+    # Create a mapping of document names to their content
+    doc_content_map = {}
+    for source in sources:
+        # Extract document name from S3 location
+        location = source['location']
+        doc_name = 'Unknown Document'
+        if location:
+            try:
+                parsed = urlparse(location)
+                if parsed.path:
+                    doc_name = parsed.path.split('/')[-1]
+                    if '.' in doc_name:
+                        doc_name = doc_name.rsplit('.', 1)[0]
+            except:
+                pass
+        
+        # Add content to document (combine multiple chunks from same document)
+        if doc_name not in doc_content_map:
+            doc_content_map[doc_name] = []
+        doc_content_map[doc_name].append(source['content'][:600])
+    
+    # Build context with document names as references
     context_parts = []
-    for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
-        content = source['content'][:600]  # Slightly more content for technical context
-        context_parts.append(f"Reference {i}:\n{content}")
+    for doc_name, content_chunks in doc_content_map.items():
+        combined_content = "\n".join(content_chunks)
+        context_parts.append(f"Document: {doc_name}\n{combined_content}")
     
     context = "\n\n".join(context_parts)
     
     rag_prompt = f"""You are a technical assistant for unemployment insurance SMEs and technical professionals. Your users prefer concise, direct responses. Be brief and to-the-point. Avoid verbose explanations. {language_instruction}
 
 CRITICAL INSTRUCTIONS:
-- ONLY use information from the Technical References below
-- Do NOT add any information not explicitly stated in the references
-- If the question cannot be answered from the references, say "This information is not available in the provided sources"
+- ONLY use information from the Documents below
+- Do NOT add any information not explicitly stated in the documents
+- If the question cannot be answered from the documents, say "This information is not available in the provided sources"
 - Be direct and concise
 - Focus on key points only
-- Cite which reference number you're using
+- When citing information, use the document name in parentheses, like: (Document Name)
 
-Technical References:
+Documents:
 {context}
 
 Question: {user_message}
 
-Provide a brief response using ONLY the information from the references above."""
+Provide a brief response using ONLY the information from the documents above. Cite document names when referencing specific information."""
 
     return rag_prompt
 
@@ -253,15 +302,38 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
             # Fallback for different response formats
             generated_text = str(response_body)
         
-        # Format sources for response
+        # Format sources for response - cleaner format without excerpts and deduplicated by document
         formatted_sources = []
+        seen_documents = {}
+        
         for source in sources:
-            formatted_sources.append({
-                'excerpt': source['content'][:200] + '...' if len(source['content']) > 200 else source['content'],
-                'score': source['score'],
-                'location': source['location'],
-                'metadata': source.get('metadata', {})
-            })
+            # Extract document name from S3 location
+            location = source['location']
+            doc_name = 'Unknown Document'
+            if location:
+                try:
+                    # Parse S3 URI to get document name
+                    parsed = urlparse(location)
+                    if parsed.path:
+                        doc_name = parsed.path.split('/')[-1]
+                        # Remove file extension for cleaner display
+                        if '.' in doc_name:
+                            doc_name = doc_name.rsplit('.', 1)[0]
+                except:
+                    pass
+            
+            # Only keep the highest scoring chunk per document
+            if doc_name not in seen_documents or source['score'] > seen_documents[doc_name]['score']:
+                seen_documents[doc_name] = {
+                    'document': doc_name,
+                    'score': round(source['score'], 3),
+                    'location': location,
+                    'downloadUrl': f"/document?path={location}" if location else None
+                }
+        
+        # Convert to list and sort by score (highest first)
+        formatted_sources = list(seen_documents.values())
+        formatted_sources.sort(key=lambda x: x['score'], reverse=True)
         
         return {
             'response': generated_text.strip(),
@@ -286,9 +358,132 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
         raise Exception("Internal service error")
 
 
+def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle document requests - view PDFs in browser, download Word docs"""
+    try:
+        # Get the document path from query parameters
+        query_params = event.get('queryStringParameters') or {}
+        document_path = query_params.get('path')
+        
+        if not document_path:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Missing document path parameter'})
+            }
+        
+        # Parse S3 URI
+        if not document_path.startswith('s3://'):
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Invalid S3 path'})
+            }
+        
+        # Extract bucket and key from S3 URI
+        s3_parts = document_path[5:].split('/', 1)  # Remove 's3://' prefix
+        if len(s3_parts) != 2:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'Invalid S3 URI format'})
+            }
+        
+        bucket_name, object_key = s3_parts
+        
+        # Get the document from S3
+        try:
+            response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+            content = response['Body'].read()
+            content_type = response.get('ContentType', 'application/octet-stream')
+            
+            # Get filename for download
+            filename = object_key.split('/')[-1]
+            file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
+            
+            logger.info(f"Document request - object_key: {object_key}, filename: {filename}, extension: {file_extension}")
+            
+            # Determine headers based on file type
+            headers = {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+                'Access-Control-Allow-Methods': 'GET,OPTIONS'
+            }
+            
+            # PDFs: View in browser (no download header)
+            if file_extension == 'pdf':
+                headers['Content-Type'] = 'application/pdf'
+                logger.info(f"PDF detected - serving for browser viewing")
+                # No Content-Disposition header = view in browser
+            
+            # Word docs and other files: Force download
+            else:
+                headers['Content-Type'] = content_type
+                headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+                logger.info(f"Non-PDF detected - serving for download with filename: {filename}")
+            
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': base64.b64encode(content).decode('utf-8'),
+                'isBase64Encoded': True
+            }
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey':
+                return {
+                    'statusCode': 404,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'error': 'Document not found'})
+                }
+            elif error_code == 'AccessDenied':
+                return {
+                    'statusCode': 403,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'error': 'Access denied to document'})
+                }
+            else:
+                logger.error(f"S3 error retrieving document: {e}")
+                return {
+                    'statusCode': 500,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'error': 'Failed to retrieve document'})
+                }
+                
+    except Exception as e:
+        logger.error(f"Error handling document request: {e}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({'error': 'Internal server error'})
+        }
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Main Lambda handler for chat requests
+    Main Lambda handler for chat requests and document downloads
     
     Args:
         event: API Gateway event
@@ -300,14 +495,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     request_id = context.aws_request_id
     start_time = datetime.utcnow()
     
+    # Check if this is a document download request
+    path = event.get('rawPath') or event.get('path', '')
+    if path == '/document':
+        return handle_document_request(event)
+    
     logger.info(f"Processing chat request: {request_id}")
+    logger.info(f"Environment variables - MODEL_ID: {MODEL_ID}, KNOWLEDGE_BASE_ID: {KNOWLEDGE_BASE_ID}, USE_KNOWLEDGE_BASE: {USE_KNOWLEDGE_BASE}")
     
     try:
         # Parse and validate request
         chat_request = ChatRequest.from_event(event)
         validate_request(chat_request)
         
-        logger.info(f"Chat request - User: {chat_request.user_id}, Session: {chat_request.session_id}")
+        logger.info(f"Chat request - User: {chat_request.user_id}, Session: {chat_request.session_id}, Language: {chat_request.language}")
+        logger.info(f"User message: {chat_request.message[:100]}...")
         
         # Invoke Bedrock model directly
         model_result = invoke_bedrock_model(chat_request)
@@ -322,6 +524,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Emit success metrics - just log for now
         processing_time = (datetime.utcnow() - start_time).total_seconds()
         logger.info(f"Successfully processed request {request_id} in {processing_time:.2f}s")
+        logger.info(f"Response length: {len(chat_response.response)}, Sources count: {len(chat_response.sources)}")
         
         return {
             'statusCode': 200,

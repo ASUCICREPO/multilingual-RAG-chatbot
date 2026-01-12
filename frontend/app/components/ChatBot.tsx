@@ -4,10 +4,17 @@ import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChatAPI, ChatRequest } from '../lib/chatApi';
+import { getConfig } from '../lib/config';
 
 type Message = {
   type: 'user' | 'bot' | 'typing';
   text: string;
+  sources?: Array<{
+    document: string;
+    score: number;
+    location: string;
+    downloadUrl: string | null;
+  }>;
 };
 
 export default function ChatBot() {
@@ -55,10 +62,14 @@ export default function ChatBot() {
     // Make API call and show bot response
     setTimeout(async () => {
       try {
-        const response = await callChatAPI(text, language);
+        const result = await callChatAPI(text, language);
         setMessages(prev => {
           const filtered = prev.filter(m => m.type !== 'typing');
-          return [...filtered, { type: 'bot', text: response }];
+          return [...filtered, { 
+            type: 'bot', 
+            text: result.response,
+            sources: result.sources
+          }];
         });
       } catch (error) {
         setMessages(prev => {
@@ -76,8 +87,18 @@ export default function ChatBot() {
     handleSend(question);
   };
 
+  const handleDocumentView = async (location: string, documentName: string) => {
+    try {
+      // Use the ChatAPI method that handles authentication and proper filename
+      await chatAPI.current.viewDocument(location);
+    } catch (error) {
+      console.error('Document view failed:', error);
+      alert(`Failed to open ${documentName}. Please try again.`);
+    }
+  };
+
   // Function to call the actual chat API
-  const callChatAPI = async (message: string, language: 'english' | 'spanish'): Promise<string> => {
+  const callChatAPI = async (message: string, language: 'english' | 'spanish'): Promise<{ response: string; sources?: any[] }> => {
     try {
       const request: ChatRequest = {
         message,
@@ -92,7 +113,10 @@ export default function ChatBot() {
         setSessionId(response.sessionId);
       }
 
-      return response.response;
+      return {
+        response: response.response,
+        sources: response.sources && response.sources.length > 0 ? response.sources : undefined
+      };
     } catch (error) {
       console.error('API call failed:', error);
       
@@ -102,7 +126,7 @@ export default function ChatBot() {
         spanish: "Lo siento, tengo problemas para conectarme a mis servicios en este momento. Por favor, inténtalo de nuevo en un momento, o contacta al soporte si el problema persiste."
       };
       
-      return errorMessages[language];
+      return { response: errorMessages[language] };
     }
   };
 
@@ -117,7 +141,7 @@ export default function ChatBot() {
     setShowButtons(true);
     
     // Generate new session ID when language changes
-    setSessionId(`session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    setSessionId(`session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`);
   }, [language]);
 
   // Check API connection on component mount
@@ -223,45 +247,96 @@ export default function ChatBot() {
               </div>
             ) : (
               <div className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-4 py-3 rounded-2xl ${
+                <div className={`max-w-[85%] ${
                   msg.type === 'user'
-                    ? 'bg-[#1e5a8e] text-white rounded-br-sm'
-                    : 'bg-white text-gray-700 rounded-bl-sm shadow-sm'
+                    ? ''
+                    : 'space-y-3'
                 }`}>{/* Increased max-width from 75% to 85% */}
-                  {msg.type === 'bot' ? (
-                    <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-p:text-gray-700 prose-strong:text-gray-800 prose-ul:text-gray-700 prose-ol:text-gray-700 prose-li:text-gray-700 prose-code:text-gray-800 prose-code:bg-gray-100 prose-a:text-blue-600 prose-a:break-all">
-                      <ReactMarkdown 
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          // Custom styling for markdown elements
-                          h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-800">{children}</h1>,
-                          h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-800">{children}</h2>,
-                          h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-800">{children}</h3>,
-                          p: ({children}) => <p className="mb-2 last:mb-0 text-gray-700 leading-relaxed break-words">{children}</p>,
-                          ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1 text-gray-700 pl-2">{children}</ul>,
-                          ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1 text-gray-700 pl-2">{children}</ol>,
-                          li: ({children}) => <li className="text-gray-700 break-words">{children}</li>,
-                          strong: ({children}) => <strong className="font-semibold text-gray-800">{children}</strong>,
-                          code: ({children}) => <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-gray-800 break-all">{children}</code>,
-                          pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-sm font-mono overflow-x-auto mb-2 border">{children}</pre>,
-                          blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600 mb-2">{children}</blockquote>,
-                          a: ({children, href}) => (
-                            <a 
-                              href={href} 
-                              target="_blank" 
-                              rel="noopener noreferrer" 
-                              className="text-blue-600 hover:text-blue-800 underline break-all"
-                            >
-                              {children}
-                            </a>
-                          ),
-                        }}
-                      >
-                        {msg.text}
-                      </ReactMarkdown>
+                  {/* Main message */}
+                  <div className={`px-4 py-3 rounded-2xl ${
+                    msg.type === 'user'
+                      ? 'bg-[#1e5a8e] text-white rounded-br-sm'
+                      : 'bg-white text-gray-700 rounded-bl-sm shadow-sm'
+                  }`}>
+                    {msg.type === 'bot' ? (
+                      <div className="prose prose-sm max-w-none prose-headings:text-gray-800 prose-p:text-gray-700 prose-strong:text-gray-800 prose-ul:text-gray-700 prose-ol:text-gray-700 prose-li:text-gray-700 prose-code:text-gray-800 prose-code:bg-gray-100 prose-a:text-blue-600 prose-a:break-all">
+                        <ReactMarkdown 
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            // Custom styling for markdown elements
+                            h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-800">{children}</h1>,
+                            h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-800">{children}</h2>,
+                            h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-800">{children}</h3>,
+                            p: ({children}) => <p className="mb-2 last:mb-0 text-gray-700 leading-relaxed break-words">{children}</p>,
+                            ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1 text-gray-700 pl-2">{children}</ul>,
+                            ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1 text-gray-700 pl-2">{children}</ol>,
+                            li: ({children}) => <li className="text-gray-700 break-words">{children}</li>,
+                            strong: ({children}) => <strong className="font-semibold text-gray-800">{children}</strong>,
+                            code: ({children}) => <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-gray-800 break-all">{children}</code>,
+                            pre: ({children}) => <pre className="bg-gray-100 p-3 rounded text-sm font-mono overflow-x-auto mb-2 border">{children}</pre>,
+                            blockquote: ({children}) => <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-600 mb-2">{children}</blockquote>,
+                            a: ({children, href}) => (
+                              <a 
+                                href={href} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-blue-600 hover:text-blue-800 underline break-all"
+                              >
+                                {children}
+                              </a>
+                            ),
+                          }}
+                        >
+                          {msg.text}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <span className="whitespace-pre-line">{msg.text}</span>
+                    )}
+                  </div>
+                  
+                  {/* Sources section for bot messages */}
+                  {msg.type === 'bot' && msg.sources && msg.sources.length > 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span className="text-sm font-medium text-gray-600">
+                          {language === 'english' ? 'Source Documents' : 'Documentos Fuente'} ({msg.sources.length})
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {msg.sources.map((source, sourceIndex) => (
+                          <div key={sourceIndex} className="flex items-center justify-between bg-white rounded-lg p-2 border border-gray-100">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <svg className="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-800 truncate">{source.document}</p>
+                                <p className="text-xs text-gray-500">
+                                  {language === 'english' ? 'Relevance' : 'Relevancia'}: {Math.round(source.score * 100)}%
+                                </p>
+                              </div>
+                            </div>
+                            {source.downloadUrl && (
+                              <button
+                                onClick={() => handleDocumentView(source.location, source.document)}
+                                className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors flex-shrink-0"
+                                title={language === 'english' ? 'View document' : 'Ver documento'}
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                                {language === 'english' ? 'View' : 'Ver'}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ) : (
-                    <span className="whitespace-pre-line">{msg.text}</span>
                   )}
                 </div>
               </div>
