@@ -472,6 +472,10 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           'X-Api-Key',
           'X-Amz-Security-Token',
         ],
+        exposeHeaders: [
+          'Content-Disposition',
+          'Content-Type',
+        ],
         maxAge: cdk.Duration.days(1),
       },
     });
