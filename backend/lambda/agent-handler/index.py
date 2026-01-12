@@ -1,8 +1,8 @@
 """
-Bedrock Chatbot Agent Handler Lambda Function
+Bedrock Chatbot with Knowledge Base Handler Lambda Function
 
-This Lambda function serves as the handler for chat requests, coordinating between
-API Gateway and the Bedrock Agent to process user queries and return responses.
+This Lambda function uses direct Bedrock API calls with Knowledge Base retrieval
+for RAG (Retrieval Augmented Generation) capabilities.
 """
 
 import json
@@ -10,7 +10,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import boto3
 from botocore.exceptions import ClientError
@@ -20,11 +20,15 @@ logger = logging.getLogger()
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 # Initialize AWS clients
+bedrock_runtime = boto3.client('bedrock-runtime')
 bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
 
 # Environment variables
-BEDROCK_AGENT_ID = os.getenv('BEDROCK_AGENT_ID')
-BEDROCK_AGENT_ALIAS_ID = os.getenv('BEDROCK_AGENT_ALIAS_ID')
+MODEL_ID = os.getenv('MODEL_ID', 'amazon.nova-pro-v1:0')
+KNOWLEDGE_BASE_ID = os.getenv('KNOWLEDGE_BASE_ID')
+MAX_TOKENS = int(os.getenv('MAX_TOKENS', '2048'))
+TEMPERATURE = float(os.getenv('TEMPERATURE', '0.7'))
+USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
 
 
 class ChatRequest:
@@ -97,59 +101,153 @@ def validate_request(chat_request: ChatRequest) -> None:
         raise ValueError("Message too long")
 
 
-def invoke_bedrock_agent(chat_request: ChatRequest) -> Dict[str, Any]:
-    """Invoke Bedrock Agent with the user's message"""
+def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
+    """Retrieve relevant documents from Knowledge Base"""
+    if not USE_KNOWLEDGE_BASE or not KNOWLEDGE_BASE_ID:
+        return []
+    
     try:
-        logger.info(f"Invoking Bedrock Agent for session: {chat_request.session_id}")
+        logger.info(f"Retrieving from Knowledge Base: {KNOWLEDGE_BASE_ID}")
         
-        response = bedrock_agent_runtime.invoke_agent(
-            agentId=BEDROCK_AGENT_ID,
-            agentAliasId=BEDROCK_AGENT_ALIAS_ID,
-            sessionId=chat_request.session_id,
-            inputText=chat_request.message
+        response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            retrievalQuery={
+                'text': query
+            },
+            retrievalConfiguration={
+                'vectorSearchConfiguration': {
+                    'numberOfResults': 5,  # Adjust as needed
+                    'overrideSearchType': 'HYBRID'  # SEMANTIC, HYBRID
+                }
+            }
         )
         
-        # Process the streaming response
-        agent_response = ""
         sources = []
+        for result in response.get('retrievalResults', []):
+            sources.append({
+                'content': result.get('content', {}).get('text', ''),
+                'score': result.get('score', 0.0),
+                'location': result.get('location', {}).get('s3Location', {}).get('uri', ''),
+                'metadata': result.get('metadata', {})
+            })
         
-        for event in response['completion']:
-            if 'chunk' in event:
-                chunk = event['chunk']
-                if 'bytes' in chunk:
-                    agent_response += chunk['bytes'].decode('utf-8')
-            elif 'trace' in event:
-                # Extract source information from trace
-                trace = event['trace']
-                if 'knowledgeBaseLookup' in trace:
-                    kb_lookup = trace['knowledgeBaseLookup']
-                    if 'retrievedReferences' in kb_lookup:
-                        for ref in kb_lookup['retrievedReferences']:
-                            sources.append({
-                                'title': ref.get('metadata', {}).get('title', 'Unknown'),
-                                'excerpt': ref.get('content', {}).get('text', '')[:200] + '...',
-                                's3Uri': ref.get('location', {}).get('s3Location', {}).get('uri', ''),
-                                'confidence': ref.get('score', 0.0)
-                            })
+        logger.info(f"Retrieved {len(sources)} sources from Knowledge Base")
+        return sources
+        
+    except ClientError as e:
+        logger.error(f"Knowledge Base retrieval error: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error in Knowledge Base retrieval: {e}")
+        return []
+
+
+def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]]) -> str:
+    """Build a RAG prompt with retrieved context"""
+    if not sources:
+        return user_message
+    
+    context_parts = []
+    for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
+        content = source['content'][:500]  # Limit content length
+        context_parts.append(f"Source {i}:\n{content}")
+    
+    context = "\n\n".join(context_parts)
+    
+    rag_prompt = f"""You are a helpful AI assistant. Use the following context to answer the user's question. If the context doesn't contain relevant information, you can provide a general response but mention that you don't have specific information about the topic.
+
+Context:
+{context}
+
+User Question: {user_message}
+
+Please provide a helpful and accurate response based on the context above."""
+
+    return rag_prompt
+
+
+def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
+    """Invoke Bedrock model with optional Knowledge Base retrieval"""
+    try:
+        # Retrieve from Knowledge Base if enabled
+        sources = retrieve_from_knowledge_base(chat_request.message)
+        
+        # Build the prompt (with or without RAG context)
+        if sources:
+            prompt = build_rag_prompt(chat_request.message, sources)
+            logger.info(f"Using RAG prompt with {len(sources)} sources")
+        else:
+            prompt = chat_request.message
+            logger.info("Using direct prompt (no RAG)")
+        
+        logger.info(f"Invoking Bedrock model {MODEL_ID}")
+        
+        # Prepare the request body for Nova Pro
+        request_body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "inferenceConfig": {
+                "maxTokens": MAX_TOKENS,
+                "temperature": TEMPERATURE
+            }
+        }
+        
+        # Invoke the model
+        response = bedrock_runtime.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps(request_body),
+            contentType='application/json',
+            accept='application/json'
+        )
+        
+        # Parse the response
+        response_body = json.loads(response['body'].read())
+        
+        # Extract the generated text
+        if 'output' in response_body and 'message' in response_body['output']:
+            generated_text = response_body['output']['message']['content'][0]['text']
+        else:
+            # Fallback for different response formats
+            generated_text = str(response_body)
+        
+        # Format sources for response
+        formatted_sources = []
+        for source in sources:
+            formatted_sources.append({
+                'excerpt': source['content'][:200] + '...' if len(source['content']) > 200 else source['content'],
+                'score': source['score'],
+                'location': source['location'],
+                'metadata': source.get('metadata', {})
+            })
         
         return {
-            'response': agent_response.strip(),
-            'sources': sources
+            'response': generated_text.strip(),
+            'sources': formatted_sources
         }
         
     except ClientError as e:
         error_code = e.response['Error']['Code']
-        logger.error(f"Bedrock Agent error: {error_code} - {e}")
+        logger.error(f"Bedrock API error: {error_code} - {e}")
         
         if error_code == 'ThrottlingException':
             raise Exception("Service temporarily unavailable. Please try again later.")
         elif error_code == 'ValidationException':
             raise ValueError("Invalid request parameters")
+        elif error_code == 'ModelNotReadyException':
+            raise Exception("Model is not ready. Please try again later.")
         else:
-            raise Exception("Agent service error. Please try again.")
+            raise Exception("AI service error. Please try again.")
     
     except Exception as e:
-        logger.error(f"Unexpected error invoking Bedrock Agent: {e}")
+        logger.error(f"Unexpected error invoking Bedrock model: {e}")
         raise Exception("Internal service error")
 
 
@@ -176,14 +274,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"Chat request - User: {chat_request.user_id}, Session: {chat_request.session_id}")
         
-        # Invoke Bedrock Agent
-        agent_result = invoke_bedrock_agent(chat_request)
+        # Invoke Bedrock model directly
+        model_result = invoke_bedrock_model(chat_request)
         
         # Create response
         chat_response = ChatResponse(
-            response=agent_result['response'],
+            response=model_result['response'],
             session_id=chat_request.session_id,
-            sources=agent_result['sources']
+            sources=model_result['sources']
         )
         
         # Emit success metrics - just log for now
