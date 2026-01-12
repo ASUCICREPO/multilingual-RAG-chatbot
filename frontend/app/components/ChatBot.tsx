@@ -30,20 +30,14 @@ export default function ChatBot() {
 
   const sampleQuestions = {
     english: [
-      "What are your office hours?",
-      "How do I file for unemployment?",
-      "Check my claim status",
-      "When will I receive payment?",
-      "Help me find a job",
-      "I forgot my password"
+      "What are the requirements for UI modernization?",
+      "What are the recommended staffing levels?",
+      "What DevOps practices should we follow?"
     ],
     spanish: [
-      "¿Cuáles son sus horarios de oficina?",
-      "¿Cómo solicito el desempleo?",
-      "Verificar el estado de mi reclamo",
-      "¿Cuándo recibiré el pago?",
-      "Ayúdame a encontrar trabajo",
-      "Olvidé mi contraseña"
+      "¿Cuáles son los requisitos para la modernización de UI?",
+      "¿Cuáles son los niveles de personal recomendados?",
+      "¿Qué prácticas de DevOps debemos seguir?"
     ]
   };
 
