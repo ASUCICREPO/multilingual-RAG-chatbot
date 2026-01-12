@@ -27,7 +27,7 @@ bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
 MODEL_ID = os.getenv('MODEL_ID', 'global.amazon.nova-2-lite-v1:0')
 KNOWLEDGE_BASE_ID = os.getenv('KNOWLEDGE_BASE_ID')
 MAX_TOKENS = int(os.getenv('MAX_TOKENS', '2048'))
-TEMPERATURE = float(os.getenv('TEMPERATURE', '0.7'))
+TEMPERATURE = float(os.getenv('TEMPERATURE', '0.3'))
 USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
 
 
@@ -143,25 +143,38 @@ def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
 
 
 def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]]) -> str:
-    """Build a RAG prompt with retrieved context"""
+    """Build a RAG prompt with retrieved context for technical users"""
     if not sources:
-        return user_message
+        # Direct prompt for technical users without RAG context
+        return f"""You are a technical assistant for informed users. Provide direct, concise answers without unnecessary explanations. Focus on actionable information and specific details.
+
+Question: {user_message}
+
+Provide a clear, technical response."""
     
     context_parts = []
     for i, source in enumerate(sources[:3], 1):  # Use top 3 sources
-        content = source['content'][:500]  # Limit content length
-        context_parts.append(f"Source {i}:\n{content}")
+        content = source['content'][:600]  # Slightly more content for technical context
+        context_parts.append(f"Reference {i}:\n{content}")
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a helpful AI assistant. Use the following context to answer the user's question. If the context doesn't contain relevant information, you can provide a general response but mention that you don't have specific information about the topic.
+    rag_prompt = f"""You are a technical assistant for informed users working with company procedures and technical practices. Your users are knowledgeable professionals who prefer direct, concise responses.
 
-Context:
+Guidelines:
+- Be direct and to-the-point
+- Assume technical competency 
+- Focus on actionable information
+- Avoid unnecessary explanations of basic concepts
+- Reference specific procedures when available
+- If information is missing from context, state it clearly
+
+Technical References:
 {context}
 
-User Question: {user_message}
+Question: {user_message}
 
-Please provide a helpful and accurate response based on the context above."""
+Provide a concise, technical response based on the references above."""
 
     return rag_prompt
 
@@ -175,14 +188,19 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
         # Build the prompt (with or without RAG context)
         if sources:
             prompt = build_rag_prompt(chat_request.message, sources)
-            logger.info(f"Using RAG prompt with {len(sources)} sources")
+            logger.info(f"Using RAG prompt with {len(sources)} technical references")
         else:
-            prompt = chat_request.message
-            logger.info("Using direct prompt (no RAG)")
+            # Direct technical prompt without RAG
+            prompt = f"""You are a technical assistant for informed professionals. Provide direct, concise answers focused on actionable information. Avoid verbose explanations unless specifically requested.
+
+Question: {chat_request.message}
+
+Response:"""
+            logger.info("Using direct technical prompt (no RAG context available)")
         
         logger.info(f"Invoking Bedrock model {MODEL_ID}")
         
-        # Prepare the request body for Nova Pro
+        # Prepare the request body for Nova 2 Lite - optimized for technical users
         request_body = {
             "messages": [
                 {
@@ -196,7 +214,8 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
             ],
             "inferenceConfig": {
                 "maxTokens": MAX_TOKENS,
-                "temperature": TEMPERATURE
+                "temperature": TEMPERATURE,  # Lower temperature for more focused, direct responses
+                "topP": 0.9,  # Slightly focused sampling for technical accuracy
             }
         }
         

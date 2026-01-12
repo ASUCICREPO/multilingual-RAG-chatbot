@@ -233,7 +233,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         KNOWLEDGE_BASE_ID: this.knowledgeBase.attrKnowledgeBaseId,
         USE_KNOWLEDGE_BASE: 'true',
         MAX_TOKENS: '2048',
-        TEMPERATURE: '0.7',
+        TEMPERATURE: '0.3',  // Lower temperature for more focused, direct responses
         LOG_LEVEL: isDevelopment ? 'DEBUG' : 'INFO',
       },
       logGroup: new logs.LogGroup(this, 'AgentHandlerLogGroup', {
