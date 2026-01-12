@@ -135,7 +135,7 @@ def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
             },
             retrievalConfiguration={
                 'vectorSearchConfiguration': {
-                    'numberOfResults': 10,  # Increased from 5 to get more results
+                    'numberOfResults': 5,  # Reduced from 10 to 5 for more focused results
                 }
             }
         )
@@ -228,22 +228,22 @@ def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language:
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a technical assistant for unemployment insurance SMEs and technical professionals. Your users prefer concise, direct responses. Be brief and to-the-point. Avoid verbose explanations. {language_instruction}
+    rag_prompt = f"""You are a technical assistant for unemployment insurance SMEs and technical professionals. Be extremely brief and direct. {language_instruction}
 
 CRITICAL INSTRUCTIONS:
 - ONLY use information from the Documents below
-- Do NOT add any information not explicitly stated in the documents
+- Give SHORT, direct answers
+- Use bullet points for lists
+- NO verbose explanations or background information
 - If the question cannot be answered from the documents, say "This information is not available in the provided sources"
-- Be direct and concise
-- Focus on key points only
-- When citing information, use the document name in parentheses, like: (Document Name)
+- When citing information, use the document name in parentheses: (Document Name)
 
 Documents:
 {context}
 
 Question: {user_message}
 
-Provide a brief response using ONLY the information from the documents above. Cite document names when referencing specific information."""
+Provide a brief, direct response using ONLY the information from the documents above."""
 
     return rag_prompt
 
@@ -278,9 +278,9 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
                 }
             ],
             "inferenceConfig": {
-                "maxTokens": 1024,  # Reduced from 2048 to encourage brevity
-                "temperature": 0.2,  # Reduced from 0.3 for more focused responses
-                "topP": 0.8,  # Reduced from 0.9 for more focused sampling
+                "maxTokens": 512,  # Reduced from 1024 to force more concise responses
+                "temperature": 0.5,  # Increased from 0.1 to allow more natural responses
+                "topP": 0.7,  # Reduced from 0.8 for more focused sampling
             }
         }
         
