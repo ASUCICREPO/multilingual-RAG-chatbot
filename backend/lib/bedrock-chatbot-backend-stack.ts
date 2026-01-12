@@ -279,8 +279,13 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           'bedrock-agent-runtime:Retrieve',
         ],
         resources: [
+          // Global inference profile
           `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/global.amazon.nova-2-lite-v1:0`,
+          // Foundation model (what the global profile resolves to)
+          `arn:aws:bedrock:::foundation-model/amazon.nova-2-lite-v1:0`,
+          // All Nova models
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-*`,
+          // Knowledge Base
           this.knowledgeBase.attrKnowledgeBaseArn,
         ],
       })
