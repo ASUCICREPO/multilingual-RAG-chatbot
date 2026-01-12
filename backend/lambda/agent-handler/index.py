@@ -24,7 +24,7 @@ bedrock_runtime = boto3.client('bedrock-runtime')
 bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
 
 # Environment variables
-MODEL_ID = os.getenv('MODEL_ID', 'amazon.nova-pro-v1:0')
+MODEL_ID = os.getenv('MODEL_ID', 'global.amazon.nova-2-lite-v1:0')
 KNOWLEDGE_BASE_ID = os.getenv('KNOWLEDGE_BASE_ID')
 MAX_TOKENS = int(os.getenv('MAX_TOKENS', '2048'))
 TEMPERATURE = float(os.getenv('TEMPERATURE', '0.7'))

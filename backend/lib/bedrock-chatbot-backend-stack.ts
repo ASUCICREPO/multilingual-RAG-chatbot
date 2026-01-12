@@ -229,7 +229,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
       environment: {
-        MODEL_ID: 'amazon.nova-pro-v1:0',
+        MODEL_ID: 'global.amazon.nova-2-lite-v1:0',
         KNOWLEDGE_BASE_ID: this.knowledgeBase.attrKnowledgeBaseId,
         USE_KNOWLEDGE_BASE: 'true',
         MAX_TOKENS: '2048',
@@ -253,7 +253,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           'bedrock-agent-runtime:Retrieve',
         ],
         resources: [
-          `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-pro-v1:0`,
+          `arn:aws:bedrock:${this.region}::foundation-model/global.amazon.nova-2-lite-v1:0`,
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-*`,
           this.knowledgeBase.attrKnowledgeBaseArn,
         ],
