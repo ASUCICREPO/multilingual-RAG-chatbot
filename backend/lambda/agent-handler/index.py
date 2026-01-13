@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from urllib.parse import unquote, urlparse
 import base64
+from collections import deque
 
 import boto3
 from botocore.exceptions import ClientError
@@ -32,6 +33,10 @@ KNOWLEDGE_BASE_ID = os.getenv('KNOWLEDGE_BASE_ID')
 MAX_TOKENS = int(os.getenv('MAX_TOKENS', '2048'))
 TEMPERATURE = float(os.getenv('TEMPERATURE', '0.3'))
 USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
+MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges
+
+# In-memory conversation cache for Lambda container reuse
+conversation_cache = {}
 
 
 class ChatRequest:
@@ -69,6 +74,143 @@ class ChatRequest:
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to parse request: {e}")
             raise ValueError("Invalid request format")
+
+
+class ConversationMemory:
+    """Manages conversation history for context-aware responses"""
+    
+    def __init__(self, session_id: str, user_id: str):
+        self.session_id = session_id
+        self.user_id = user_id
+        self.history = deque(maxlen=MAX_CONVERSATION_HISTORY)
+        
+    def add_exchange(self, user_message: str, assistant_response: str):
+        """Add a user-assistant exchange to history"""
+        exchange = {
+            'user': user_message,
+            'assistant': assistant_response,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        self.history.append(exchange)
+        
+    def get_context_string(self, language: str = 'english') -> str:
+        """Get conversation history as a formatted string for context"""
+        if not self.history:
+            return ""
+            
+        context_parts = []
+        for i, exchange in enumerate(self.history, 1):
+            context_parts.append(f"Previous Q{i}: {exchange['user']}")
+            context_parts.append(f"Previous A{i}: {exchange['assistant']}")
+            
+        return "\n".join(context_parts)
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for storage"""
+        return {
+            'session_id': self.session_id,
+            'user_id': self.user_id,
+            'history': list(self.history),
+            'updated_at': datetime.utcnow().isoformat()
+        }
+        
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ConversationMemory':
+        """Create from dictionary"""
+        memory = cls(data['session_id'], data['user_id'])
+        for exchange in data.get('history', []):
+            memory.history.append(exchange)
+        return memory
+
+
+def get_conversation_memory(session_id: str, user_id: str) -> ConversationMemory:
+    """Get conversation memory from in-memory cache only"""
+    cache_key = f"{user_id}:{session_id}"
+    
+    # Check in-memory cache
+    if cache_key not in conversation_cache:
+        conversation_cache[cache_key] = ConversationMemory(session_id, user_id)
+    
+    return conversation_cache[cache_key]
+
+
+def build_rag_prompt_with_context(user_message: str, sources: List[Dict[str, Any]], 
+                                conversation_context: str, language: str = 'english') -> str:
+    """Build a RAG prompt with retrieved context and conversation history"""
+    
+    # Language instruction
+    language_instruction = ""
+    if language == 'spanish':
+        language_instruction = "Responde en español. "
+    
+    # Add conversation context if available
+    conversation_section = ""
+    if conversation_context:
+        conversation_section = f"""
+Previous conversation in this session:
+{conversation_context}
+
+"""
+    
+    if not sources:
+        # No sources available - handle both conversational and technical cases
+        no_source_prompt = f"""You are a helpful technical assistant. {language_instruction}
+
+{conversation_section}Current message: {user_message}
+
+Instructions:
+- If this is conversational feedback (like "thank you", "that was helpful", "got it", etc.), respond naturally and conversationally. Start your response with [CONVERSATIONAL]
+- If this is a technical question but no relevant sources were found, explain that you can only provide information based on available source documents. Start your response with [TECHNICAL]
+- Keep responses brief and natural
+
+Response:"""
+        return no_source_prompt
+    
+    # Create a mapping of document names to their content
+    doc_content_map = {}
+    for source in sources:
+        # Extract document name from S3 location
+        location = source['location']
+        doc_name = 'Unknown Document'
+        if location:
+            try:
+                parsed = urlparse(location)
+                if parsed.path:
+                    doc_name = parsed.path.split('/')[-1]
+                    if '.' in doc_name:
+                        doc_name = doc_name.rsplit('.', 1)[0]
+            except:
+                pass
+        
+        # Add content to document (combine multiple chunks from same document)
+        if doc_name not in doc_content_map:
+            doc_content_map[doc_name] = []
+        doc_content_map[doc_name].append(source['content'][:600])
+    
+    # Build context with document names as references
+    context_parts = []
+    for doc_name, content_chunks in doc_content_map.items():
+        combined_content = "\n".join(content_chunks)
+        context_parts.append(f"Document: {doc_name}\n{combined_content}")
+    
+    context = "\n\n".join(context_parts)
+    
+    rag_prompt = f"""You are a technical assistant. {language_instruction}
+
+{conversation_section}Documents available:
+{context}
+
+Current message: {user_message}
+
+Instructions:
+- If this is conversational feedback (like "thank you", "that was helpful", "got it"), respond naturally and conversationally. Start your response with [CONVERSATIONAL]
+- If this is a technical question, use ONLY the information from the documents above. Do not add information not in the documents. Start your response with [TECHNICAL]
+- For technical responses, present information as a short summary (maximum 5-6 sentences).
+- If the current question refers to something mentioned earlier (like "that", "it", "the previous option"), use the conversation history for context.
+
+Response:"""
+
+    return rag_prompt
 
 
 class ChatResponse:
@@ -183,77 +325,38 @@ def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
         return []
 
 
-def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language: str = 'english') -> str:
-    """Build a RAG prompt with retrieved context for technical users"""
-    
-    # Language instruction
-    language_instruction = ""
-    if language == 'spanish':
-        language_instruction = "Responde en español. "
-    
-    if not sources:
-        # No sources available - should not answer
-        no_source_message = {
-            'english': "I can only provide information based on the available source documents. No relevant sources were found for your question. Please try rephrasing your question or ask about topics covered in the knowledge base.",
-            'spanish': "Solo puedo proporcionar información basada en los documentos fuente disponibles. No se encontraron fuentes relevantes para su pregunta. Por favor, reformule su pregunta o pregunte sobre temas cubiertos en la base de conocimientos."
-        }
-        return f"""You must respond with exactly this message: "{no_source_message[language]}" """
-    
-    # Create a mapping of document names to their content
-    doc_content_map = {}
-    for source in sources:
-        # Extract document name from S3 location
-        location = source['location']
-        doc_name = 'Unknown Document'
-        if location:
-            try:
-                parsed = urlparse(location)
-                if parsed.path:
-                    doc_name = parsed.path.split('/')[-1]
-                    if '.' in doc_name:
-                        doc_name = doc_name.rsplit('.', 1)[0]
-            except:
-                pass
-        
-        # Add content to document (combine multiple chunks from same document)
-        if doc_name not in doc_content_map:
-            doc_content_map[doc_name] = []
-        doc_content_map[doc_name].append(source['content'][:600])
-    
-    # Build context with document names as references
-    context_parts = []
-    for doc_name, content_chunks in doc_content_map.items():
-        combined_content = "\n".join(content_chunks)
-        context_parts.append(f"Document: {doc_name}\n{combined_content}")
-    
-    context = "\n\n".join(context_parts)
-    
-    rag_prompt = f"""You are a technical assistant. Only use the information from the documents below. Do not add any information not in the documents. Present the information as a short summary. Keep it as brief as possible, maximum 5-6 sentences if needed. {language_instruction}
-
-Documents:
-{context}
-
-Question: {user_message}
-
-Answer:"""
-
-    return rag_prompt
-
-
 def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
-    """Invoke Bedrock model with optional Knowledge Base retrieval"""
+    """Invoke Bedrock model with optional Knowledge Base retrieval and conversation memory"""
     try:
-        # Retrieve from Knowledge Base if enabled
+        # Get conversation memory
+        memory = get_conversation_memory(chat_request.session_id, chat_request.user_id)
+        conversation_context = memory.get_context_string(chat_request.language)
+        
+        # Log conversation context for debugging
+        if conversation_context:
+            logger.info(f"Using conversation context with {len(memory.history)} previous exchanges")
+            logger.debug(f"Conversation context: {conversation_context[:200]}...")
+        else:
+            logger.info("No previous conversation context available")
+        
+        # Always retrieve from Knowledge Base - let the model decide how to use it
         sources = retrieve_from_knowledge_base(chat_request.message)
         
-        # Build the prompt (with or without RAG context) including language preference
+        # Build the prompt (with or without RAG context) including conversation history
         if sources:
-            prompt = build_rag_prompt(chat_request.message, sources, chat_request.language)
-            logger.info(f"Using RAG prompt with {len(sources)} technical references, language: {chat_request.language}")
+            prompt = build_rag_prompt_with_context(
+                chat_request.message, sources, conversation_context, chat_request.language
+            )
+            logger.info(f"Using RAG prompt with {len(sources)} technical references and conversation context, language: {chat_request.language}")
         else:
-            # No sources - use the no-source prompt from build_rag_prompt
-            prompt = build_rag_prompt(chat_request.message, sources, chat_request.language)
-            logger.info(f"No sources available for query, language: {chat_request.language}")
+            # No sources - use the no-source prompt from build_rag_prompt_with_context
+            prompt = build_rag_prompt_with_context(
+                chat_request.message, sources, conversation_context, chat_request.language
+            )
+            if is_likely_conversational:
+                logger.info(f"Using conversational prompt without knowledge base retrieval, language: {chat_request.language}")
+            else:
+                logger.info(f"No sources available for technical query, using conversation context, language: {chat_request.language}")
         
         logger.info(f"Invoking Bedrock model {MODEL_ID}")
         
@@ -294,6 +397,10 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
             # Fallback for different response formats
             generated_text = str(response_body)
         
+        # Add this exchange to conversation memory
+        memory.add_exchange(chat_request.message, generated_text.strip())
+        logger.info(f"Added exchange to conversation memory. Total exchanges: {len(memory.history)}")
+        
         # Format sources for response - cleaner format without excerpts and deduplicated by document
         formatted_sources = []
         seen_documents = {}
@@ -327,9 +434,25 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
         formatted_sources = list(seen_documents.values())
         formatted_sources.sort(key=lambda x: x['score'], reverse=True)
         
+        # Check if the model indicated this is conversational
+        response_text = generated_text.strip()
+        is_conversational = response_text.startswith('[CONVERSATIONAL]')
+        is_technical = response_text.startswith('[TECHNICAL]')
+        
+        # Remove the marker from the response
+        if is_conversational:
+            response_text = response_text.replace('[CONVERSATIONAL]', '').strip()
+            logger.info(f"Model indicated conversational response - hiding sources")
+        elif is_technical:
+            response_text = response_text.replace('[TECHNICAL]', '').strip()
+            logger.info(f"Model indicated technical response - showing sources")
+        
+        # Only show sources for technical responses
+        final_sources = [] if is_conversational else formatted_sources
+        
         return {
-            'response': generated_text.strip(),
-            'sources': formatted_sources
+            'response': response_text,
+            'sources': final_sources
         }
         
     except ClientError as e:
