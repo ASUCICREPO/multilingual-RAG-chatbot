@@ -228,14 +228,14 @@ def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language:
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a technical assistant for unemployment insurance SMEs and technical professionals. Be concise and to the point. {language_instruction}
-
-Use the information from the documents below to answer the question. When citing information, reference the document name in parentheses.
+    rag_prompt = f"""You are a technical assistant. Use only the information from the documents below and present it as a summary. {language_instruction}
 
 Documents:
 {context}
 
-Question: {user_message}"""
+Question: {user_message}
+
+Answer:"""
 
     return rag_prompt
 
