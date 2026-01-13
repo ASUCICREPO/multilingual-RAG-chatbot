@@ -228,7 +228,7 @@ def build_rag_prompt(user_message: str, sources: List[Dict[str, Any]], language:
     
     context = "\n\n".join(context_parts)
     
-    rag_prompt = f"""You are a technical assistant. Use only the information from the documents below and present it as a summary. {language_instruction}
+    rag_prompt = f"""You are a technical assistant. Only use the information from the documents below. Do not add any information not in the documents. Present the information as a short summary. Keep it as brief as possible, maximum 5-6 sentences if needed. {language_instruction}
 
 Documents:
 {context}
