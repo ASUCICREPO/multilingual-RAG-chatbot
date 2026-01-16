@@ -353,10 +353,7 @@ def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
             prompt = build_rag_prompt_with_context(
                 chat_request.message, sources, conversation_context, chat_request.language
             )
-            if is_likely_conversational:
-                logger.info(f"Using conversational prompt without knowledge base retrieval, language: {chat_request.language}")
-            else:
-                logger.info(f"No sources available for technical query, using conversation context, language: {chat_request.language}")
+            logger.info(f"No sources available for query, using conversation context, language: {chat_request.language}")
         
         logger.info(f"Invoking Bedrock model {MODEL_ID}")
         
