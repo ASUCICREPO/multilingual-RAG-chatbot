@@ -11,11 +11,6 @@ export function getConfig() {
     api: {
       baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || '',
     },
-    // Test credentials (only for development)
-    testUser: {
-      username: process.env.COGNITO_TEST_USERNAME || 'testuser',
-      password: process.env.COGNITO_TEST_PASSWORD || 'TempPass123!',
-    }
   };
 }
 
