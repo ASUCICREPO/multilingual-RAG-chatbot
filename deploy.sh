@@ -65,7 +65,7 @@ collect_test_password() {
     echo ""
     
     while true; do
-        read -sp "Enter password for test user: " password1
+        read -p "Enter password for test user: " password1
         echo ""
         
         # Validate password meets requirements
@@ -79,7 +79,7 @@ collect_test_password() {
             continue
         fi
         
-        read -sp "Confirm password: " password2
+        read -p "Confirm password: " password2
         echo ""
         
         if [ "$password1" = "$password2" ]; then
