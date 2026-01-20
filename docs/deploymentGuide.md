@@ -140,7 +140,6 @@ The script creates a unified CodeBuild project that deploys both backend and fro
    - `AMPLIFY_APP_ID` - For frontend deployment
    - `CDK_DEFAULT_REGION` - AWS region
    - `CDK_DEFAULT_ACCOUNT` - AWS account ID
-   - `TEST_USER_PASSWORD` - For Cognito user setup
 3. Links to GitHub repository and `buildspec.yml`
 
 **Expected output:**
@@ -195,7 +194,6 @@ The CodeBuild job executes these phases:
 - Creates deployment zip package
 
 **Post-Build Phase:**
-- Sets test user password in Cognito
 - Deploys frontend to Amplify
 - Completes deployment
 
@@ -353,9 +351,7 @@ aws bedrock-agent list-ingestion-jobs \
 
 1. Navigate to the **Frontend URL**
 2. Click the **chat bubble** (bottom-right corner)
-3. Log in with test user credentials:
-   - **Username:** `testuser`
-   - **Password:** (configured via AWS Console - see [User Configuration](#user-configuration-via-console))
+3. Log in with your user credentials (see [User Configuration](#user-configuration-via-console))
 4. Select language (English or Spanish)
 5. Ask a question about your uploaded documents
 6. Verify response includes source document attribution
@@ -364,9 +360,9 @@ aws bedrock-agent list-ingestion-jobs \
 
 ## User Configuration via Console
 
-After deployment, configure user credentials through the AWS Console. The deployment creates a `testuser` account, but you need to set its password before logging in.
+After deployment, create user accounts through the AWS Console. No users are created automatically during deployment.
 
-### Set Test User Password via Console
+### Create Users via Console
 
 1. **Navigate to Amazon Cognito Console**
    - Go to: https://console.aws.amazon.com/cognito/
@@ -377,36 +373,23 @@ After deployment, configure user credentials through the AWS Console. The deploy
    - Look for `bedrock-chatbot-users-development`
    - Click on the user pool name
 
-3. **Navigate to Users**
-   - Click **Users** tab
-   - Find `testuser` in the list
+3. **Create User**
+   - Click **Users** tab → **Create user**
+   - **User name**: Enter username (e.g., `testuser`)
+   - **Email address**: Enter email
+   - **Temporary password**: Set initial password
+   - Check **Mark email as verified**
+   - Click **Create user**
 
-4. **Set Password**
-   - Click on `testuser`
+4. **Set Permanent Password**
+   - Click on the new user
    - Click **Actions** → **Set password**
-   - Enter a new password meeting requirements:
+   - Enter a password meeting requirements:
      - At least 8 characters
      - Uppercase and lowercase letters
      - Numbers and special characters
    - Select **Set as permanent password**
    - Click **Set password**
-
-### Create Additional Users via Console
-
-1. **In the User Pool**, click **Users** → **Create user**
-
-2. **Configure User**:
-   - **User name**: Enter username (e.g., `john.doe`)
-   - **Email address**: Enter email
-   - **Temporary password**: Set initial password
-   - Check **Mark email as verified**
-
-3. **Click Create user**
-
-4. **Set Permanent Password** (optional):
-   - Click on the new user
-   - **Actions** → **Set password**
-   - Set permanent password
 
 ### Create Users via CLI (Alternative)
 

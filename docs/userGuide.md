@@ -30,9 +30,7 @@ Navigate to the Frontend URL to start using the chatbot.
 
 ### Logging In
 
-**Test User Credentials** (created during deployment):
-- **Username**: `testuser`
-- **Password**: The password you configured during deployment
+**User Credentials**: Use the credentials configured via AWS Cognito Console after deployment. See the [Deployment Guide](./deploymentGuide.md#user-configuration-via-console) for instructions on creating users.
 
 **Login Process**:
 1. Navigate to the Frontend URL
