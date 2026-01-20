@@ -302,24 +302,6 @@ All endpoints return consistent error responses.
 
 ---
 
-## Rate Limiting
-
-The API Gateway implements rate limiting to prevent abuse.
-
-| Parameter | Value |
-|-----------|-------|
-| Rate Limit | 100 requests/second |
-| Burst Capacity | 200 requests |
-
-**Rate Limit Exceeded Response (429):**
-```json
-{
-  "message": "Too Many Requests"
-}
-```
-
----
-
 ## CORS Configuration
 
 The API supports Cross-Origin Resource Sharing (CORS) for browser-based clients.

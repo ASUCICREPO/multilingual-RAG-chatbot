@@ -118,7 +118,7 @@ For detailed deployment instructions, including prerequisites and step-by-step g
 | **S3 Vectors** | Vector storage for document embeddings |
 | **Amazon S3** | Source document storage |
 | **AWS Lambda** | Serverless compute for API handlers |
-| **API Gateway** | HTTP API with rate limiting and CORS |
+| **API Gateway** | HTTP API with JWT authorization and CORS |
 | **Amazon Cognito** | User authentication and JWT authorization |
 | **AWS Amplify** | Frontend hosting and deployment |
 | **AWS CDK** | Infrastructure as Code |
