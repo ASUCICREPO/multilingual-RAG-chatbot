@@ -1,4 +1,4 @@
-# NASWA Multilingual RAG Chatbot
+# Multilingual RAG Chatbot
 
 An AI-powered multilingual chatbot platform for the National Association of State Workforce Agencies (NASWA) that provides intelligent document retrieval and conversational assistance, powered by AWS Bedrock Knowledge Base and RAG (Retrieval Augmented Generation).
 
