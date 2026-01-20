@@ -29,11 +29,11 @@ The deployment consists of 4 main phases:
 3. **Phase 3:** Create CodeBuild Project for Unified Deployment
 4. **Phase 4:** Execute Build (CDK Backend + Next.js Frontend)
 
-After deployment, you'll need to:
-- Configure user credentials via AWS Console
-- Upload documents to the Knowledge Base
-- Trigger a Knowledge Base sync
-- Access the application
+After deployment, you'll need to (all via AWS Console):
+1. Create user accounts (Cognito)
+2. Upload documents to S3 bucket
+3. Sync the Knowledge Base (Bedrock)
+4. Test and access the application
 
 ---
 
@@ -258,111 +258,11 @@ FRONTEND_URL=<value>
 
 ---
 
-## Post-Deployment: Upload Documents to Knowledge Base
-
-After deployment, you need to upload documents for the chatbot to reference.
-
-### Step 5.1: Get S3 Bucket Name
-
-```bash
-BUCKET_NAME=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`DocumentSourceBucketName`].OutputValue' \
-  --output text)
-
-echo "Bucket Name: $BUCKET_NAME"
-```
-
-### Step 5.2: Upload Documents
-
-Upload your documents to the `/docs` prefix:
-
-```bash
-# Upload a single document
-aws s3 cp your-document.pdf s3://$BUCKET_NAME/docs/
-
-# Upload multiple documents
-aws s3 cp ./documents/ s3://$BUCKET_NAME/docs/ --recursive
-
-# Verify upload
-aws s3 ls s3://$BUCKET_NAME/docs/
-```
-
-**Supported file formats:**
-- PDF files (`.pdf`)
-- Word documents (`.docx`)
-- Text files (`.txt`)
-- Markdown files (`.md`)
-
-### Step 5.3: Start Knowledge Base Ingestion
-
-Trigger the ingestion job to process uploaded documents:
-
-```bash
-# Get Data Source ID
-DS_ID=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`DataSourceId`].OutputValue' \
-  --output text)
-
-# Get Knowledge Base ID
-KB_ID=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`KnowledgeBaseId`].OutputValue' \
-  --output text)
-
-# Start ingestion job
-aws bedrock-agent start-ingestion-job \
-  --knowledge-base-id $KB_ID \
-  --data-source-id $DS_ID
-```
-
-### Step 5.4: Check Ingestion Status
-
-```bash
-aws bedrock-agent list-ingestion-jobs \
-  --knowledge-base-id $KB_ID \
-  --data-source-id $DS_ID \
-  --query 'ingestionJobSummaries[0].{Status:status,Documents:statistics.numberOfDocumentsScanned}'
-```
-
-**Wait for status to be `COMPLETE` before testing the chatbot.**
-
----
-
-## Verification
-
-### Verify Deployment Success
-
-1. **Frontend:** Access the Frontend URL from deployment summary
-2. **Health Check:** Test the API health endpoint:
-   ```bash
-   curl $API_GATEWAY_URL/health
-   ```
-   Expected response:
-   ```json
-   {"status": "healthy", "service": "bedrock-chatbot-backend", "timestamp": "..."}
-   ```
-3. **Cognito:** Verify user pool exists in Cognito console
-4. **S3 Bucket:** Verify bucket exists with `/docs` prefix
-5. **Knowledge Base:** Verify Knowledge Base is in "Ready" state
-
-### Test the System
-
-1. Navigate to the **Frontend URL**
-2. Click the **chat bubble** (bottom-right corner)
-3. Log in with your user credentials (see [User Configuration](#user-configuration-via-console))
-4. Select language (English or Spanish)
-5. Ask a question about your uploaded documents
-6. Verify response includes source document attribution
-
----
-
-## User Configuration via Console
+## Post-Deployment Step 1: Create User Accounts
 
 After deployment, create user accounts through the AWS Console. No users are created automatically during deployment.
 
-### Create Users via Console
+### Create User via Console
 
 1. **Navigate to Amazon Cognito Console**
    - Go to: https://console.aws.amazon.com/cognito/
@@ -375,45 +275,131 @@ After deployment, create user accounts through the AWS Console. No users are cre
 
 3. **Create User**
    - Click **Users** tab → **Create user**
-   - **User name**: Enter username (e.g., `testuser`)
-   - **Email address**: Enter email
-   - **Temporary password**: Set initial password
-   - Check **Mark email as verified**
+   - Configure the following settings:
+
+   **Invitation message:**
+   - Select **"Don't send an invitation"**
+
+   **User name:**
+   - Enter a username (e.g., `testuser`) - *Required*
+
+   **Email address:**
+   - Enter a valid email address (e.g., `user@example.com`)
+   - ⚠️ **Important**: Check the box **"Mark email address as verified"**
+
+   **Temporary password:**
+   - Select **"Set a password"**
+   - Enter a temporary password (e.g., `TempPass123!`)
+   
    - Click **Create user**
 
-4. **Set Permanent Password**
-   - Click on the new user
-   - Click **Actions** → **Set password**
-   - Enter a password meeting requirements:
-     - At least 8 characters
-     - Uppercase and lowercase letters
-     - Numbers and special characters
-   - Select **Set as permanent password**
-   - Click **Set password**
+4. **First Login - Password Change**
+   - When the user logs in for the first time with the temporary password, they will be prompted to set a new permanent password
+   - The application handles this automatically with a password change form
+   - Password requirements: 8+ characters, uppercase, lowercase, numbers, special characters
 
-### Create Users via CLI (Alternative)
+---
 
-```bash
-# Get User Pool ID
-USER_POOL_ID=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
-  --output text)
+## Post-Deployment Step 2: Upload Documents to Knowledge Base
 
-# Create new user
-aws cognito-idp admin-create-user \
-  --user-pool-id $USER_POOL_ID \
-  --username newuser \
-  --user-attributes Name=email,Value=newuser@example.com Name=email_verified,Value=true \
-  --message-action SUPPRESS
+Upload documents for the chatbot to reference using the AWS Console.
 
-# Set permanent password
-aws cognito-idp admin-set-user-password \
-  --user-pool-id $USER_POOL_ID \
-  --username newuser \
-  --password "YourSecurePassword123!" \
-  --permanent
-```
+### Find Your S3 Bucket
+
+1. **Navigate to Amazon S3 Console**
+   - Go to: https://console.aws.amazon.com/s3/
+   - Ensure you're in the **us-east-1** region
+
+2. **Find the Document Bucket**
+   - Look for a bucket named `bedrock-chatbot-documents-development-<account-id>`
+   - Click on the bucket name to open it
+
+### Upload Documents
+
+1. **Navigate to the docs folder**
+   - Click on the `docs/` folder (create it if it doesn't exist by clicking **Create folder** → name it `docs` → click **Create folder**)
+
+2. **Upload Files**
+   - Click **Upload**
+   - Click **Add files** or drag and drop your documents
+   - Click **Upload** to start the upload
+
+**Supported file formats:**
+- PDF files (`.pdf`)
+- Word documents (`.docx`)
+- Text files (`.txt`)
+- Markdown files (`.md`)
+
+---
+
+## Post-Deployment Step 3: Sync Knowledge Base
+
+After uploading documents, sync the Knowledge Base to process and index them.
+
+### Start Knowledge Base Sync
+
+1. **Navigate to Amazon Bedrock Console**
+   - Go to: https://console.aws.amazon.com/bedrock/
+   - Ensure you're in the **us-east-1** region
+
+2. **Find Your Knowledge Base**
+   - In the left sidebar, click **Build** → **Knowledge bases**
+   - Look for `bedrock-chatbot-kb-development`
+   - Click on the knowledge base name
+
+3. **Start Sync**
+   - Scroll down to the **Data source** section
+   - Select the data source `bedrock-chatbot-datasource-development`
+   - Click **Sync** button
+
+### Check Sync Status
+
+1. **Monitor Progress**
+   - The sync status will show as **Syncing** while processing
+   - Wait for the status to change to **Available** or **Ready**
+
+2. **View Sync Details**
+   - Click on the data source to see sync history
+   - Check the number of documents processed and any errors
+
+**Wait for sync to complete before testing the chatbot.**
+
+---
+
+## Post-Deployment Step 4: Verify and Test
+
+### Verify Deployment Success
+
+1. **Frontend:** Access the Frontend URL from deployment summary (e.g., `https://main.d1234abcdef.amplifyapp.com`)
+
+2. **Cognito User Pool:** 
+   - Go to **Cognito Console** → **User pools**
+   - Verify `bedrock-chatbot-users-development` exists
+
+3. **S3 Bucket:** 
+   - Go to **S3 Console**
+   - Verify `bedrock-chatbot-documents-development-*` bucket exists
+   - Verify `docs/` folder contains your uploaded documents
+
+4. **Knowledge Base:** 
+   - Go to **Bedrock Console** → **Build** → **Knowledge bases**
+   - Verify `bedrock-chatbot-kb-development` shows status **Available**
+
+5. **API Gateway:**
+   - Go to **API Gateway Console**
+   - Verify `bedrock-chatbot-api-development` exists
+
+### Test the System
+
+1. Navigate to the **Frontend URL** (e.g., `https://main.d1234abcdef.amplifyapp.com`)
+2. You will be redirected to the **Login page**
+3. Log in with the user credentials you created in [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)
+   - If using a temporary password, you'll be prompted to set a new permanent password
+4. After login, you'll see the main page with a **red chat bubble** in the bottom-right corner
+5. Click the **chat bubble** to open the NASWA Assistant
+6. In the chat header, use the **language dropdown** to select English or Español
+7. Ask a question about your uploaded documents (or click a sample question)
+8. Verify the response includes source document attribution
 
 ---
 
@@ -520,6 +506,23 @@ cdk bootstrap aws://<account-id>/<region>
    ```
 3. Check for missing environment variables
 
+### Issue: Authentication Error - "No ID token received"
+
+**Error:** `Authentication error: Error: No ID token received from Cognito`
+
+**Possible Causes:**
+1. User was created without email or email not verified
+2. User status is "Force change password" (expected - handled by frontend)
+
+**Solution:**
+1. Go to **Cognito Console** → **User pools** → `bedrock-chatbot-users-development`
+2. Click **Users** → select your user
+3. Verify the user has:
+   - Email address set
+   - Email marked as verified
+4. If you see the password change form on login, enter a new password meeting requirements
+5. If issues persist, delete and recreate the user following [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)
+
 ### Issue: Frontend Shows "Connection Issues"
 
 **Possible Causes:**
@@ -528,21 +531,24 @@ cdk bootstrap aws://<account-id>/<region>
 3. Cognito settings incorrect
 
 **Solution:**
-1. Verify API health: `curl $API_GATEWAY_URL/health`
-2. Check browser console for CORS errors
-3. Verify Cognito callback URLs include your frontend URL
+1. Open browser Developer Tools (F12) → **Network** tab → check for failed requests
+2. Go to **API Gateway Console** → find `bedrock-chatbot-api-development` → verify it exists
+3. Check browser console for CORS errors
+4. Go to **Cognito Console** → **User pools** → **App integration** → verify callback URLs
 
 ### Issue: Knowledge Base Returns No Results
 
 **Possible Causes:**
 1. No documents uploaded
-2. Ingestion job not complete
-3. Documents in wrong S3 prefix
+2. Knowledge Base sync not complete
+3. Documents in wrong S3 folder
 
 **Solution:**
-1. Upload documents to `s3://bucket/docs/` (note the `/docs` prefix)
-2. Start ingestion job and wait for completion
-3. Check ingestion status for errors
+1. Go to **S3 Console** → find `bedrock-chatbot-documents-development-*` bucket
+2. Verify documents are in the `docs/` folder (not root)
+3. Go to **Bedrock Console** → **Build** → **Knowledge bases** → `bedrock-chatbot-kb-development`
+4. Check the data source sync status is **Available**
+5. If needed, click **Sync** to re-sync the Knowledge Base
 
 ---
 
