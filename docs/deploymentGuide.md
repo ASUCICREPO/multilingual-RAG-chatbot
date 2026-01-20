@@ -46,11 +46,23 @@ After deployment, you'll need to (all via AWS Console):
 1. In the AWS Console, **ensure you are in the us-east-1 region** (check top-right corner)
 2. Click the **CloudShell icon** (terminal icon in the top navigation bar)
 3. Wait for CloudShell to initialize
-4. Verify and set your region:
+4. Configure AWS CLI (if not already configured):
    ```bash
-   export AWS_REGION=us-east-1
-   echo $AWS_REGION
+   aws configure
    ```
+   When prompted, enter:
+   - **AWS Access Key ID**: Your access key
+   - **AWS Secret Access Key**: Your secret key
+   - **Default region name**: `us-east-1`
+   - **Default output format**: `json` (or press Enter for default)
+
+   > **Note**: CloudShell may already have credentials configured. You can skip this step if `aws sts get-caller-identity` works.
+
+5. Verify configuration:
+   ```bash
+   aws sts get-caller-identity
+   ```
+   You should see your account ID and user/role ARN.
 
 ### Step 1.2: Clone the Repository
 
