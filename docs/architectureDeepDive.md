@@ -149,7 +149,6 @@ The entire infrastructure is defined using **AWS CDK (Cloud Development Kit)** i
   - Deploys CDK backend stack
   - Builds Next.js frontend
   - Deploys to Amplify
-  - Configures test user password
 
 The CDK approach enables:
 - Version-controlled infrastructure

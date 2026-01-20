@@ -95,7 +95,7 @@ The deployment script will:
 2. Deploy CDK backend infrastructure
 3. Build and deploy the frontend to Amplify
 4. Configure Cognito authentication
-5. Output all necessary URLs and credentials
+5. Output all necessary URLs and configuration details
 
 For detailed deployment instructions, including prerequisites and step-by-step guides, see [docs/deploymentGuide.md](docs/deploymentGuide.md).
 

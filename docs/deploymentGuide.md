@@ -71,7 +71,7 @@ chmod +x ./deploy.sh
 ./deploy.sh
 ```
 
-The deployment will begin automatically. User credentials will be configured after deployment via the AWS Console (see [User Configuration](#user-configuration-via-console) section).
+The deployment will begin automatically. User credentials will be configured after deployment via the AWS Console (see [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)).
 
 ### Step 1.5: IAM Service Role Creation
 
