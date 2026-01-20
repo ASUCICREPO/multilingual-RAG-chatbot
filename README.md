@@ -73,12 +73,20 @@ For a detailed overview of the user journey and application workflow, see [docs/
 
 ## Deployment
 
+### Prerequisites
+
+- **AWS CLI** - Install from [aws.amazon.com/cli](https://aws.amazon.com/cli/)
+- **AWS Account** - With permissions to create IAM, Lambda, S3, Cognito, Amplify, and Bedrock resources
+- **Git** - For cloning the repository
+
+For detailed prerequisites, see [docs/prerequisites.md](docs/prerequisites.md).
+
 ### Quick Start
 
 ⚠️ **Region Requirement**: This project only supports **us-east-1** (US East - N. Virginia).
 
 ```bash
-# Configure AWS CLI (if not already configured)
+# Configure AWS CLI
 aws configure
 # Enter: Access Key, Secret Key, Region: us-east-1, Output: json
 
