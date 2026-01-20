@@ -199,7 +199,7 @@ The CodeBuild job executes these phases:
 
 ### Step 4.3: Wait for Deployment
 
-**This will take approximately 15-20 minutes.**
+**This will take approximately 10-15 minutes.**
 
 You can also monitor the build in AWS Console:
 1. Go to **AWS CodeBuild Console**: https://console.aws.amazon.com/codesuite/codebuild/

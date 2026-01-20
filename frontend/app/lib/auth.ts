@@ -64,8 +64,17 @@ export class AuthService {
 
       const data = await response.json();
       
+      // Handle challenge responses (e.g., NEW_PASSWORD_REQUIRED)
+      if (data.ChallengeName) {
+        if (data.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+          throw new Error('Password change required. Please set a permanent password via AWS Console: Go to Cognito > User Pools > Users > Select user > Actions > Set password > Check "Set as permanent password"');
+        }
+        throw new Error(`Authentication challenge: ${data.ChallengeName}. Please contact administrator.`);
+      }
+      
       if (!data.AuthenticationResult?.IdToken) {
-        throw new Error('No ID token received from Cognito');
+        console.error('Unexpected Cognito response:', data);
+        throw new Error('No ID token received from Cognito. Please verify user is confirmed and has a permanent password.');
       }
 
       this.jwtToken = data.AuthenticationResult.IdToken;
