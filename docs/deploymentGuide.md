@@ -13,12 +13,10 @@ This guide provides step-by-step instructions to deploy the Multilingual RAG Cha
 👉 **[Read the Prerequisites Guide](./prerequisites.md)** 👈
 
 The prerequisites guide covers:
-- AWS account requirements and region selection
-- **Bedrock Model Access** - Required for Nova 2 Lite and Nova Embeddings
+- AWS account requirements and region selection (us-east-1 only)
+- **Bedrock Model Access** - Automatically enabled for Nova models
 - AWS CLI and CDK installation
 - IAM permissions for deployment
-
-**Bedrock model access must be enabled before deployment.**
 
 ---
 
@@ -26,19 +24,20 @@ The prerequisites guide covers:
 
 The deployment consists of 4 main phases:
 
-1. **Phase 1:** Configure Test User Password & Create IAM Service Role
+1. **Phase 1:** Create IAM Service Role
 2. **Phase 2:** Create Amplify Application for Frontend Hosting
 3. **Phase 3:** Create CodeBuild Project for Unified Deployment
 4. **Phase 4:** Execute Build (CDK Backend + Next.js Frontend)
 
 After deployment, you'll need to:
+- Configure user credentials via AWS Console
 - Upload documents to the Knowledge Base
 - Trigger a Knowledge Base sync
 - Access the application
 
 ---
 
-## Phase 1: Configure Password & Create IAM Service Role
+## Phase 1: Create IAM Service Role
 
 ### Step 1.1: Open AWS CloudShell
 
@@ -72,29 +71,9 @@ chmod +x ./deploy.sh
 ./deploy.sh
 ```
 
-### Step 1.5: Configure Test User Password
+The deployment will begin automatically. User credentials will be configured after deployment via the AWS Console (see [User Configuration](#user-configuration-via-console) section).
 
-When prompted, enter a password for the test user:
-
-```
-🔐 Test User Password Configuration
-
-A test user will be created for development/testing purposes.
-Please provide a password for the test user (username: testuser)
-
-Password requirements:
-  - At least 8 characters
-  - Contains uppercase and lowercase letters
-  - Contains numbers
-  - Contains special characters
-
-Enter password for test user: ********
-Confirm password: ********
-```
-
-**Save this password** - you'll need it to log into the application.
-
-### Step 1.6: IAM Service Role Creation
+### Step 1.5: IAM Service Role Creation
 
 The script automatically creates an IAM service role for CodeBuild:
 
@@ -376,10 +355,82 @@ aws bedrock-agent list-ingestion-jobs \
 2. Click the **chat bubble** (bottom-right corner)
 3. Log in with test user credentials:
    - **Username:** `testuser`
-   - **Password:** (the password you configured during deployment)
+   - **Password:** (configured via AWS Console - see [User Configuration](#user-configuration-via-console))
 4. Select language (English or Spanish)
 5. Ask a question about your uploaded documents
 6. Verify response includes source document attribution
+
+---
+
+## User Configuration via Console
+
+After deployment, configure user credentials through the AWS Console. The deployment creates a `testuser` account, but you need to set its password before logging in.
+
+### Set Test User Password via Console
+
+1. **Navigate to Amazon Cognito Console**
+   - Go to: https://console.aws.amazon.com/cognito/
+   - Ensure you're in the **us-east-1** region
+
+2. **Find Your User Pool**
+   - Click **User pools** in the left sidebar
+   - Look for `bedrock-chatbot-users-development`
+   - Click on the user pool name
+
+3. **Navigate to Users**
+   - Click **Users** tab
+   - Find `testuser` in the list
+
+4. **Set Password**
+   - Click on `testuser`
+   - Click **Actions** → **Set password**
+   - Enter a new password meeting requirements:
+     - At least 8 characters
+     - Uppercase and lowercase letters
+     - Numbers and special characters
+   - Select **Set as permanent password**
+   - Click **Set password**
+
+### Create Additional Users via Console
+
+1. **In the User Pool**, click **Users** → **Create user**
+
+2. **Configure User**:
+   - **User name**: Enter username (e.g., `john.doe`)
+   - **Email address**: Enter email
+   - **Temporary password**: Set initial password
+   - Check **Mark email as verified**
+
+3. **Click Create user**
+
+4. **Set Permanent Password** (optional):
+   - Click on the new user
+   - **Actions** → **Set password**
+   - Set permanent password
+
+### Create Users via CLI (Alternative)
+
+```bash
+# Get User Pool ID
+USER_POOL_ID=$(aws cloudformation describe-stacks \
+  --stack-name BedrockChatbotBackendStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
+  --output text)
+
+# Create new user
+aws cognito-idp admin-create-user \
+  --user-pool-id $USER_POOL_ID \
+  --username newuser \
+  --user-attributes Name=email,Value=newuser@example.com Name=email_verified,Value=true \
+  --message-action SUPPRESS
+
+# Set permanent password
+aws cognito-idp admin-set-user-password \
+  --user-pool-id $USER_POOL_ID \
+  --username newuser \
+  --password "YourSecurePassword123!" \
+  --permanent
+```
 
 ---
 
