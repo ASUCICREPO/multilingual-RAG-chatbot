@@ -431,13 +431,18 @@ aws bedrock-agent list-ingestion-jobs \
 **Error:** `AccessDeniedException: You don't have access to the model`
 
 **Solution:**
-1. Go to **Amazon Bedrock Console** → **Model access**
-2. Click **Manage model access**
-3. Enable access for:
-   - Amazon Nova Lite
-   - Amazon Nova Embeddings
-4. Wait for approval (usually instant for Amazon models)
-5. Redeploy
+As of October 2025, Amazon Nova models are automatically enabled. If you see this error:
+
+1. **Check IAM permissions** - Ensure your role has `bedrock:InvokeModel` permission
+2. **Verify region** - Ensure you're in us-east-1 where all services are available
+3. **Check the model ID** - Verify the model ID is correct: `global.amazon.nova-2-lite-v1:0`
+
+```bash
+# Test model access
+aws bedrock list-foundation-models \
+  --by-provider amazon \
+  --query 'modelSummaries[?contains(modelId, `nova`)]'
+```
 
 ### Issue: S3 Vectors Not Available
 

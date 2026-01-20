@@ -25,24 +25,14 @@ Your AWS account must have access to the following Amazon Bedrock services:
 #### Amazon Nova 2 Lite Model Access
 - **Model ID**: `global.amazon.nova-2-lite-v1:0`
 - **Purpose**: Large language model for chat responses and RAG generation
-- **How to Request Access**:
-  1. Navigate to the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/)
-  2. Go to **Model access** in the left sidebar
-  3. Click **Manage model access**
-  4. Select **Amazon Nova Lite** 
-  5. Click **Request model access**
-  6. Wait for approval (typically instant for Amazon models)
+- **Access**: ✅ **Automatically enabled** - No manual console action required
 
 #### Amazon Nova Multimodal Embeddings Access
 - **Model ID**: `amazon.nova-2-multimodal-embeddings-v1:0`
 - **Purpose**: Generate 3072-dimensional embeddings for semantic search
-- **How to Request Access**:
-  1. Navigate to the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/)
-  2. Go to **Model access** in the left sidebar
-  3. Click **Manage model access**
-  4. Select **Amazon Nova Embeddings**
-  5. Click **Request model access**
-  6. Wait for approval (typically instant for Amazon models)
+- **Access**: ✅ **Automatically enabled** - No manual console action required
+
+> **Note**: As of October 2025, Amazon Bedrock provides [automatic enablement](https://aws.amazon.com/about-aws/whats-new/2025/10/amazon-bedrock-automatic-enablement-serverless-foundation-models/) for all serverless foundation models. Amazon Nova models are available immediately without manual activation through the console.
 
 #### Bedrock Knowledge Base
 - **Purpose**: RAG document indexing and retrieval with S3 Vectors storage
@@ -62,9 +52,9 @@ Your AWS account must have access to the following Amazon Bedrock services:
 
 ---
 
-## Verify Bedrock Model Access
+## Verify Bedrock Access
 
-After requesting access, verify your models are available:
+Verify that you can access Bedrock models in your region:
 
 ```bash
 # List available Nova models
@@ -86,7 +76,7 @@ aws bedrock list-foundation-models \
 +------------------------------------------+
 ```
 
-If status is not `ACTIVE`, return to the Bedrock console and request access.
+> **Note**: With automatic enablement, Amazon Nova models should be immediately available. If you encounter access issues, verify your IAM permissions include `bedrock:InvokeModel`.
 
 ---
 
