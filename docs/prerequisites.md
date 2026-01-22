@@ -229,7 +229,7 @@ Before running the deployment script, verify:
 
 - [ ] AWS account is active with billing enabled
 - [ ] AWS CLI is configured with valid credentials (`aws sts get-caller-identity` works)
-- [ ] Bedrock model access granted for **Nova Lite** and **Nova Embeddings**
+- [ ] Bedrock Nova models are available (automatically enabled)
 - [ ] S3 Vectors service is available in your target region
 - [ ] Node.js 18+ and npm 9+ are installed
 - [ ] Git is installed for cloning the repository

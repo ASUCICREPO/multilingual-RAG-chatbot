@@ -29,7 +29,6 @@ AMPLIFY_URL=""
 ROLE_ARN=""
 USER_POOL_ID=""
 USER_POOL_CLIENT_ID=""
-TEST_USER_PASSWORD=""
 
 # Function to print colored output
 print_status() {
@@ -48,52 +47,6 @@ print_error() {
 print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
-
-# Function to collect test user password
-collect_test_password() {
-    echo ""
-    print_status "🔐 Test User Password Configuration"
-    echo ""
-    echo "A test user will be created for development/testing purposes."
-    echo "Please provide a password for the test user (username: testuser)"
-    echo ""
-    echo "Password requirements:"
-    echo "  - At least 8 characters"
-    echo "  - Contains uppercase and lowercase letters"
-    echo "  - Contains numbers"
-    echo "  - Contains special characters"
-    echo ""
-    
-    while true; do
-        read -p "Enter password for test user: " password1
-        echo ""
-        
-        # Validate password meets requirements
-        if [[ ${#password1} -lt 8 ]]; then
-            print_warning "Password must be at least 8 characters long"
-            continue
-        fi
-        
-        if ! [[ "$password1" =~ [A-Z] ]] || ! [[ "$password1" =~ [a-z] ]] || ! [[ "$password1" =~ [0-9] ]] || ! [[ "$password1" =~ [^a-zA-Z0-9] ]]; then
-            print_warning "Password must contain uppercase, lowercase, numbers, and special characters"
-            continue
-        fi
-        
-        read -p "Confirm password: " password2
-        echo ""
-        
-        if [ "$password1" = "$password2" ]; then
-            TEST_USER_PASSWORD="$password1"
-            print_success "Password set successfully"
-            break
-        else
-            print_warning "Passwords do not match. Please try again."
-        fi
-    done
-}
-
-# Collect test user password before starting deployment
-collect_test_password
 
 print_codebuild() {
     echo -e "${PURPLE}[CODEBUILD]${NC} $1"
@@ -248,11 +201,6 @@ ENV_VARS_ARRAY='{
 {
     "name": "CDK_DEFAULT_ACCOUNT",
     "value": "'"$AWS_ACCOUNT_ID"'",
-    "type": "PLAINTEXT"
-},
-{
-    "name": "TEST_USER_PASSWORD",
-    "value": "'"$TEST_USER_PASSWORD"'",
     "type": "PLAINTEXT"
 }'
 
@@ -467,11 +415,13 @@ echo "==========================================================================
 echo "NEXT STEPS"
 echo "=========================================================================="
 echo ""
-echo "✅ Test User Credentials:"
-echo "   Username: testuser"
-echo "   Password: (the password you configured during deployment)"
+echo "1. Create a user via AWS Console:"
+echo "   - Go to Amazon Cognito Console: https://console.aws.amazon.com/cognito/"
+echo "   - Select User Pool: bedrock-chatbot-users-development"
+echo "   - Go to Users > Create user"
+echo "   - Set username, email, and password"
 echo ""
-echo "1. Upload documents to Knowledge Base:"
+echo "2. Upload documents to Knowledge Base:"
 echo ""
 echo "   BUCKET_NAME=\$(aws cloudformation describe-stacks \\"
 echo "     --stack-name $STACK_NAME \\"
@@ -480,7 +430,7 @@ echo "     --output text)"
 echo ""
 echo "   aws s3 cp your-document.pdf s3://\$BUCKET_NAME/docs/"
 echo ""
-echo "2. Start ingestion job:"
+echo "3. Start ingestion job:"
 echo ""
 echo "   DS_ID=\$(aws cloudformation describe-stacks \\"
 echo "     --stack-name $STACK_NAME \\"
@@ -491,7 +441,7 @@ echo "   aws bedrock-agent start-ingestion-job \\"
 echo "     --knowledge-base-id $KB_ID \\"
 echo "     --data-source-id \$DS_ID"
 echo ""
-echo "3. Access the application:"
+echo "4. Access the application:"
 echo "   Frontend: https://main.$AMPLIFY_URL"
 echo "   Health Check: curl $API_GATEWAY_URL/health"
 echo ""

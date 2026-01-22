@@ -149,7 +149,6 @@ The entire infrastructure is defined using **AWS CDK (Cloud Development Kit)** i
   - Deploys CDK backend stack
   - Builds Next.js frontend
   - Deploys to Amplify
-  - Configures test user password
 
 The CDK approach enables:
 - Version-controlled infrastructure
@@ -209,7 +208,6 @@ The system uses a **RAG (Retrieval Augmented Generation) architecture** with int
 
 - **Serverless Architecture**: Automatically scales with demand, no server management
 - **Lambda Configuration**: 512 MB memory, 30-second timeout for model inference
-- **API Gateway Throttling**: 100 requests/second with 200 burst capacity
 - **Knowledge Base Optimization**: Fixed-size chunking (512 tokens) with 20% overlap for context preservation
 - **S3 Vectors**: Purpose-built vector storage with optimized similarity search
 - **Conversation Memory**: In-memory caching for Lambda container reuse

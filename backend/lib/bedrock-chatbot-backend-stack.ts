@@ -416,25 +416,6 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       refreshTokenValidity: cdk.Duration.days(30),
     });
 
-    // Create a test user in development environment
-    if (isDevelopment) {
-      new cognito.CfnUserPoolUser(this, 'TestUser', {
-        userPoolId: this.userPool.userPoolId,
-        username: 'testuser',
-        userAttributes: [
-          {
-            name: 'email',
-            value: 'test@example.com',
-          },
-          {
-            name: 'email_verified',
-            value: 'true',
-          },
-        ],
-        messageAction: 'SUPPRESS', // Don't send welcome email in development
-      });
-    }
-
     // CDK Nag suppressions for Cognito
     NagSuppressions.addResourceSuppressions(
       this.userPool,

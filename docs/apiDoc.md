@@ -30,7 +30,7 @@ The API uses Amazon Cognito JWT authentication for protected endpoints.
 TOKEN=$(aws cognito-idp initiate-auth \
   --auth-flow USER_PASSWORD_AUTH \
   --client-id <USER_POOL_CLIENT_ID> \
-  --auth-parameters USERNAME=testuser,PASSWORD='YourPassword123!' \
+  --auth-parameters USERNAME=<your-username>,PASSWORD='<your-password>' \
   --query 'AuthenticationResult.IdToken' \
   --output text)
 ```
@@ -297,24 +297,6 @@ All endpoints return consistent error responses.
   "message": "Internal server error",
   "requestId": "abc123",
   "timestamp": "2026-01-20T15:30:00.000Z"
-}
-```
-
----
-
-## Rate Limiting
-
-The API Gateway implements rate limiting to prevent abuse.
-
-| Parameter | Value |
-|-----------|-------|
-| Rate Limit | 100 requests/second |
-| Burst Capacity | 200 requests |
-
-**Rate Limit Exceeded Response (429):**
-```json
-{
-  "message": "Too Many Requests"
 }
 ```
 

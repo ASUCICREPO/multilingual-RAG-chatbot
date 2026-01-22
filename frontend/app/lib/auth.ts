@@ -1,5 +1,18 @@
 import { validateConfig } from './config';
 
+// Challenge response type
+export interface AuthChallenge {
+  challengeName: string;
+  session: string;
+  challengeParameters: Record<string, string>;
+}
+
+// Login result type
+export interface LoginResult {
+  success: boolean;
+  challenge?: AuthChallenge;
+}
+
 // Simple authentication service for the chatbot
 export class AuthService {
   private static instance: AuthService;
@@ -32,7 +45,7 @@ export class AuthService {
     return AuthService.instance;
   }
 
-  async login(username: string, password: string): Promise<void> {
+  async login(username: string, password: string): Promise<LoginResult> {
     const config = validateConfig();
     
     try {
@@ -59,34 +72,113 @@ export class AuthService {
         if (errorData.__type === 'NotAuthorizedException') {
           throw new Error('Incorrect username or password');
         }
-        throw new Error('Authentication failed');
+        if (errorData.__type === 'UserNotFoundException') {
+          throw new Error('User not found');
+        }
+        throw new Error(errorData.message || 'Authentication failed');
       }
 
       const data = await response.json();
       
+      // Handle challenge responses (e.g., NEW_PASSWORD_REQUIRED)
+      if (data.ChallengeName) {
+        if (data.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+          // Store username for the challenge response
+          this.username = username;
+          return {
+            success: false,
+            challenge: {
+              challengeName: data.ChallengeName,
+              session: data.Session,
+              challengeParameters: data.ChallengeParameters || {}
+            }
+          };
+        }
+        throw new Error(`Authentication challenge: ${data.ChallengeName}. Please contact administrator.`);
+      }
+      
       if (!data.AuthenticationResult?.IdToken) {
-        throw new Error('No ID token received from Cognito');
+        console.error('Unexpected Cognito response:', data);
+        throw new Error('No ID token received from Cognito.');
       }
 
-      this.jwtToken = data.AuthenticationResult.IdToken;
-      this.username = username;
-      this.password = password;
-      
-      // Set expiry to 50 minutes (tokens are valid for 1 hour)
-      this.tokenExpiry = Date.now() + (50 * 60 * 1000);
-      
-      // Store in sessionStorage (cleared when browser closes)
-      if (typeof window !== 'undefined' && this.jwtToken) {
-        sessionStorage.setItem('jwt_token', this.jwtToken);
-        sessionStorage.setItem('token_expiry', this.tokenExpiry.toString());
-        sessionStorage.setItem('username', username);
-        sessionStorage.setItem('password', password);
-      }
+      this.setTokens(data.AuthenticationResult, username, password);
+      return { success: true };
       
     } catch (error) {
       console.error('Authentication error:', error);
       this.clearToken();
       throw error;
+    }
+  }
+
+  async completeNewPasswordChallenge(newPassword: string, session: string): Promise<void> {
+    const config = validateConfig();
+    
+    if (!this.username) {
+      throw new Error('No username stored. Please start login again.');
+    }
+
+    try {
+      const response = await fetch(config.cognito.identityProviderUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-amz-json-1.1',
+          'X-Amz-Target': 'AWSCognitoIdentityProviderService.RespondToAuthChallenge'
+        },
+        body: JSON.stringify({
+          ClientId: config.cognito.clientId,
+          ChallengeName: 'NEW_PASSWORD_REQUIRED',
+          Session: session,
+          ChallengeResponses: {
+            USERNAME: this.username,
+            NEW_PASSWORD: newPassword
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Challenge response failed:', errorData);
+        
+        if (errorData.__type === 'InvalidPasswordException') {
+          throw new Error('Password does not meet requirements: At least 8 characters with uppercase, lowercase, numbers, and special characters.');
+        }
+        if (errorData.__type === 'InvalidParameterException') {
+          throw new Error(errorData.message || 'Invalid password format');
+        }
+        throw new Error(errorData.message || 'Failed to set new password');
+      }
+
+      const data = await response.json();
+      
+      if (!data.AuthenticationResult?.IdToken) {
+        console.error('Unexpected response after challenge:', data);
+        throw new Error('Failed to complete password change');
+      }
+
+      this.setTokens(data.AuthenticationResult, this.username, newPassword);
+      
+    } catch (error) {
+      console.error('Challenge response error:', error);
+      throw error;
+    }
+  }
+
+  private setTokens(authResult: { IdToken: string; AccessToken?: string; RefreshToken?: string }, username: string, password: string): void {
+    this.jwtToken = authResult.IdToken;
+    this.username = username;
+    this.password = password;
+    
+    // Set expiry to 50 minutes (tokens are valid for 1 hour)
+    this.tokenExpiry = Date.now() + (50 * 60 * 1000);
+    
+    // Store in sessionStorage (cleared when browser closes)
+    if (typeof window !== 'undefined' && this.jwtToken) {
+      sessionStorage.setItem('jwt_token', this.jwtToken);
+      sessionStorage.setItem('token_expiry', this.tokenExpiry.toString());
+      sessionStorage.setItem('username', username);
+      sessionStorage.setItem('password', password);
     }
   }
 
@@ -98,8 +190,8 @@ export class AuthService {
 
     // If we have stored credentials, try to refresh the token
     if (this.username && this.password) {
-      await this.login(this.username, this.password);
-      if (this.jwtToken) {
+      const result = await this.login(this.username, this.password);
+      if (result.success && this.jwtToken) {
         return this.jwtToken;
       }
     }

@@ -19,7 +19,6 @@ An AI-powered multilingual chatbot platform for the National Association of Stat
 | Prerequisites         | [Prerequisites](docs/prerequisites.md)                |
 | User Flow             | [User Flow](docs/userGuide.md)                        |
 | Deployment            | [Deployment](docs/deploymentGuide.md)                 |
-| Usage                 | [Usage](#usage)                                       |
 | Credits               | [Credits](#credits)                                   |
 | License               | [License](#license)                                   |
 
@@ -74,17 +73,26 @@ For a detailed overview of the user journey and application workflow, see [docs/
 
 ## Deployment
 
+### Prerequisites
+
+- **AWS CLI** - Install from [aws.amazon.com/cli](https://aws.amazon.com/cli/)
+- **AWS Account** - With permissions to create IAM, Lambda, S3, Cognito, Amplify, and Bedrock resources
+- **Git** - For cloning the repository
+
+For detailed prerequisites, see [docs/prerequisites.md](docs/prerequisites.md).
+
 ### Quick Start
 
 ⚠️ **Region Requirement**: This project only supports **us-east-1** (US East - N. Virginia).
 
 ```bash
+# Configure AWS CLI
+aws configure
+# Enter: Access Key, Secret Key, Region: us-east-1, Output: json
+
 # Clone the repository
 git clone https://github.com/ASUCICREPO/multilingual-RAG-chatbot.git
 cd multilingual-RAG-chatbot
-
-# Ensure you're in us-east-1
-export AWS_REGION=us-east-1
 
 # Run the automated deployment
 ./deploy.sh
@@ -95,60 +103,9 @@ The deployment script will:
 2. Deploy CDK backend infrastructure
 3. Build and deploy the frontend to Amplify
 4. Configure Cognito authentication
-5. Output all necessary URLs and credentials
+5. Output all necessary URLs and configuration details
 
 For detailed deployment instructions, including prerequisites and step-by-step guides, see [docs/deploymentGuide.md](docs/deploymentGuide.md).
-
-## Usage
-
-### Uploading Documents
-
-After deployment, upload documents to the Knowledge Base:
-
-```bash
-# Get the bucket name
-BUCKET_NAME=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`DocumentSourceBucketName`].OutputValue' \
-  --output text)
-
-# Upload documents (place in /docs prefix)
-aws s3 cp your-document.pdf s3://$BUCKET_NAME/docs/
-```
-
-### Triggering Knowledge Base Sync
-
-```bash
-# Get Knowledge Base and Data Source IDs
-KB_ID=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`KnowledgeBaseId`].OutputValue' \
-  --output text)
-
-DS_ID=$(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`DataSourceId`].OutputValue' \
-  --output text)
-
-# Start ingestion job
-aws bedrock-agent start-ingestion-job \
-  --knowledge-base-id $KB_ID \
-  --data-source-id $DS_ID
-```
-
-### Testing the API
-
-```bash
-# Health check
-curl $(aws cloudformation describe-stacks \
-  --stack-name BedrockChatbotBackendStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`HttpApiUrl`].OutputValue' \
-  --output text)/health
-```
-
-For frontend user guide and application features, see [docs/userGuide.md](docs/userGuide.md).
-
-For API reference and backend testing, see [docs/apiDoc.md](docs/apiDoc.md).
 
 ## Infrastructure
 
@@ -161,7 +118,7 @@ For API reference and backend testing, see [docs/apiDoc.md](docs/apiDoc.md).
 | **S3 Vectors** | Vector storage for document embeddings |
 | **Amazon S3** | Source document storage |
 | **AWS Lambda** | Serverless compute for API handlers |
-| **API Gateway** | HTTP API with rate limiting and CORS |
+| **API Gateway** | HTTP API with JWT authorization and CORS |
 | **Amazon Cognito** | User authentication and JWT authorization |
 | **AWS Amplify** | Frontend hosting and deployment |
 | **AWS CDK** | Infrastructure as Code |
