@@ -11,7 +11,6 @@ type Message = {
   text: string;
   sources?: Array<{
     document: string;
-    score: number;
     location: string;
     downloadUrl: string | null;
   }>;
@@ -286,9 +285,6 @@ export default function ChatBot() {
                               </svg>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-gray-800 truncate">{source.document}</p>
-                                <p className="text-xs text-gray-500">
-                                  {language === 'english' ? 'Relevance' : 'Relevancia'}: {Math.round(source.score * 100)}%
-                                </p>
                               </div>
                             </div>
                             {source.downloadUrl && (

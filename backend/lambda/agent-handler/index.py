@@ -1,8 +1,8 @@
 """
-Bedrock Chatbot with Knowledge Base Handler Lambda Function
+Bedrock Chatbot with RetrieveAndGenerate API and Guardrails
 
-This Lambda function uses direct Bedrock API calls with Knowledge Base retrieval
-for RAG (Retrieval Augmented Generation) capabilities.
+This Lambda function uses the RetrieveAndGenerate API with Bedrock Guardrails
+for RAG (Retrieval Augmented Generation) capabilities with built-in safety controls.
 """
 
 import json
@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from urllib.parse import unquote, urlparse
 import base64
-from collections import deque
 
 import boto3
 from botocore.exceptions import ClientError
@@ -23,20 +22,45 @@ logger = logging.getLogger()
 logger.setLevel(os.getenv('LOG_LEVEL', 'INFO'))
 
 # Initialize AWS clients
-bedrock_runtime = boto3.client('bedrock-runtime')
 bedrock_agent_runtime = boto3.client('bedrock-agent-runtime')
 s3_client = boto3.client('s3')
 
 # Environment variables
-MODEL_ID = os.getenv('MODEL_ID', 'global.amazon.nova-2-lite-v1:0')
+MODEL_ARN = os.getenv('MODEL_ARN')  # Full ARN passed from CDK (inference profile)
 KNOWLEDGE_BASE_ID = os.getenv('KNOWLEDGE_BASE_ID')
+GUARDRAIL_ID = os.getenv('GUARDRAIL_ID')
+GUARDRAIL_VERSION = os.getenv('GUARDRAIL_VERSION', 'DRAFT')
 MAX_TOKENS = int(os.getenv('MAX_TOKENS', '2048'))
 TEMPERATURE = float(os.getenv('TEMPERATURE', '0.3'))
 USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
-MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges
 
-# In-memory conversation cache for Lambda container reuse
-conversation_cache = {}
+
+# Prompt template for RetrieveAndGenerate
+# NOTE: $output_format_instructions$ is REQUIRED for citations to be returned
+PROMPT_TEMPLATE = """You are a technical assistant. Answer questions using the provided document context.
+
+QUERY TYPE (determine silently, don't output):
+- FOLLOW_UP: References previous response ("provide as bullets", "explain more", "summarize that") → Use conversation history, ignore new documents if topic differs.
+- TECHNICAL: New question about documents → Use document context.
+- CONVERSATIONAL: Greetings/thanks ("hello", "thank you") → Respond briefly and naturally.
+
+STRICT RULES:
+1. Keep responses SHORT - maximum 5-6 sentences as a brief summary.
+2. Do NOT use headers, bullet points, or long lists unless specifically asked.
+3. Use ONLY information from the documents. Do not add external information.
+4. If documents don't contain relevant information, say so briefly.
+
+CONVERSATION HISTORY:
+$conversation$
+
+DOCUMENT CONTEXT:
+$search_results$
+
+QUESTION: $query$
+
+$output_format_instructions$
+
+BRIEF ANSWER:"""
 
 
 class ChatRequest:
@@ -76,160 +100,27 @@ class ChatRequest:
             raise ValueError("Invalid request format")
 
 
-class ConversationMemory:
-    """Manages conversation history for context-aware responses"""
-    
-    def __init__(self, session_id: str, user_id: str):
-        self.session_id = session_id
-        self.user_id = user_id
-        self.history = deque(maxlen=MAX_CONVERSATION_HISTORY)
-        
-    def add_exchange(self, user_message: str, assistant_response: str):
-        """Add a user-assistant exchange to history"""
-        exchange = {
-            'user': user_message,
-            'assistant': assistant_response,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        self.history.append(exchange)
-        
-    def get_context_string(self, language: str = 'english') -> str:
-        """Get conversation history as a formatted string for context"""
-        if not self.history:
-            return ""
-            
-        context_parts = []
-        for i, exchange in enumerate(self.history, 1):
-            context_parts.append(f"Previous Q{i}: {exchange['user']}")
-            context_parts.append(f"Previous A{i}: {exchange['assistant']}")
-            
-        return "\n".join(context_parts)
-        
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage"""
-        return {
-            'session_id': self.session_id,
-            'user_id': self.user_id,
-            'history': list(self.history),
-            'updated_at': datetime.utcnow().isoformat()
-        }
-        
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ConversationMemory':
-        """Create from dictionary"""
-        memory = cls(data['session_id'], data['user_id'])
-        for exchange in data.get('history', []):
-            memory.history.append(exchange)
-        return memory
-
-
-def get_conversation_memory(session_id: str, user_id: str) -> ConversationMemory:
-    """Get conversation memory from in-memory cache only"""
-    cache_key = f"{user_id}:{session_id}"
-    
-    # Check in-memory cache
-    if cache_key not in conversation_cache:
-        conversation_cache[cache_key] = ConversationMemory(session_id, user_id)
-    
-    return conversation_cache[cache_key]
-
-
-def build_rag_prompt_with_context(user_message: str, sources: List[Dict[str, Any]], 
-                                conversation_context: str, language: str = 'english') -> str:
-    """Build a RAG prompt with retrieved context and conversation history"""
-    
-    # Language instruction
-    language_instruction = ""
-    if language == 'spanish':
-        language_instruction = "Responde en español. "
-    
-    # Add conversation context if available
-    conversation_section = ""
-    if conversation_context:
-        conversation_section = f"""
-Previous conversation in this session:
-{conversation_context}
-
-"""
-    
-    if not sources:
-        # No sources available - handle both conversational and technical cases
-        no_source_prompt = f"""You are a helpful technical assistant. {language_instruction}
-
-{conversation_section}Current message: {user_message}
-
-Instructions:
-- If this is conversational feedback (like "thank you", "that was helpful", "got it", etc.), respond naturally and conversationally. Start your response with [CONVERSATIONAL]
-- If this is a technical question but no relevant sources were found, explain that you can only provide information based on available source documents. Start your response with [TECHNICAL]
-- Keep responses brief and natural
-
-Response:"""
-        return no_source_prompt
-    
-    # Create a mapping of document names to their content
-    doc_content_map = {}
-    for source in sources:
-        # Extract document name from S3 location
-        location = source['location']
-        doc_name = 'Unknown Document'
-        if location:
-            try:
-                parsed = urlparse(location)
-                if parsed.path:
-                    doc_name = parsed.path.split('/')[-1]
-                    if '.' in doc_name:
-                        doc_name = doc_name.rsplit('.', 1)[0]
-            except:
-                pass
-        
-        # Add content to document (combine multiple chunks from same document)
-        if doc_name not in doc_content_map:
-            doc_content_map[doc_name] = []
-        doc_content_map[doc_name].append(source['content'][:600])
-    
-    # Build context with document names as references
-    context_parts = []
-    for doc_name, content_chunks in doc_content_map.items():
-        combined_content = "\n".join(content_chunks)
-        context_parts.append(f"Document: {doc_name}\n{combined_content}")
-    
-    context = "\n\n".join(context_parts)
-    
-    rag_prompt = f"""You are a technical assistant. {language_instruction}
-
-{conversation_section}Documents available:
-{context}
-
-Current message: {user_message}
-
-Instructions:
-- If this is conversational feedback (like "thank you", "that was helpful", "got it"), respond naturally and conversationally. Start your response with [CONVERSATIONAL]
-- If this is a technical question, use ONLY the information from the documents above. Do not add information not in the documents. Start your response with [TECHNICAL]
-- For technical responses, present information as a short summary (maximum 5-6 sentences).
-- If the current question refers to something mentioned earlier (like "that", "it", "the previous option"), use the conversation history for context.
-
-Response:"""
-
-    return rag_prompt
-
-
 class ChatResponse:
     """Data model for chat responses"""
     
-    def __init__(self, response: str, session_id: str, sources: Optional[list] = None):
+    def __init__(self, response: str, session_id: str, sources: Optional[list] = None, guardrail_action: Optional[str] = None):
         self.response = response
         self.session_id = session_id
         self.sources = sources or []
+        self.guardrail_action = guardrail_action
         self.timestamp = datetime.utcnow().isoformat()
         
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
-        return {
+        result = {
             'response': self.response,
             'sessionId': self.session_id,
             'sources': self.sources,
             'timestamp': self.timestamp
         }
+        if self.guardrail_action:
+            result['guardrailAction'] = self.guardrail_action
+        return result
 
 
 class ErrorResponse:
@@ -260,214 +151,174 @@ def validate_request(chat_request: ChatRequest) -> None:
         raise ValueError("Message too long")
 
 
-def retrieve_from_knowledge_base(query: str) -> List[Dict[str, Any]]:
-    """Retrieve relevant documents from Knowledge Base"""
-    if not USE_KNOWLEDGE_BASE or not KNOWLEDGE_BASE_ID:
-        logger.warning("Knowledge Base not configured - USE_KNOWLEDGE_BASE or KNOWLEDGE_BASE_ID missing")
-        return []
+def invoke_retrieve_and_generate(chat_request: ChatRequest) -> Dict[str, Any]:
+    """
+    Invoke Bedrock RetrieveAndGenerate API with Guardrails
     
+    This API handles:
+    - Knowledge Base retrieval
+    - Response generation with the LLM
+    - Guardrail enforcement
+    - Session/conversation management
+    """
     try:
-        logger.info(f"Retrieving from Knowledge Base: {KNOWLEDGE_BASE_ID} with query: {query[:100]}...")
+        logger.info(f"Invoking RetrieveAndGenerate for session: {chat_request.session_id}")
+        logger.info(f"Knowledge Base ID: {KNOWLEDGE_BASE_ID}, Model ARN: {MODEL_ARN}")
+        logger.info(f"Guardrail ID: {GUARDRAIL_ID}, Version: {GUARDRAIL_VERSION}")
         
-        # Simplified retrieval configuration - remove potentially problematic overrideSearchType
-        response = bedrock_agent_runtime.retrieve(
-            knowledgeBaseId=KNOWLEDGE_BASE_ID,
-            retrievalQuery={
-                'text': query
+        # Build input text with language instruction if Spanish
+        input_text = chat_request.message
+        if chat_request.language == 'spanish':
+            input_text = f"[Respond in Spanish] {chat_request.message}"
+        
+        # Build the RetrieveAndGenerate request
+        request_params = {
+            'input': {
+                'text': input_text
             },
-            retrievalConfiguration={
-                'vectorSearchConfiguration': {
-                    'numberOfResults': 5,  # Reduced from 10 to 5 for more focused results
-                }
-            }
-        )
-        
-        logger.info(f"Raw retrieval response: {json.dumps(response, default=str)[:500]}...")
-        
-        sources = []
-        retrieval_results = response.get('retrievalResults', [])
-        logger.info(f"Found {len(retrieval_results)} retrieval results")
-        
-        for i, result in enumerate(retrieval_results):
-            logger.info(f"Processing result {i}: {json.dumps(result, default=str)[:200]}...")
-            
-            content_text = ''
-            if 'content' in result and 'text' in result['content']:
-                content_text = result['content']['text']
-            
-            location_uri = ''
-            if 'location' in result:
-                if 's3Location' in result['location'] and 'uri' in result['location']['s3Location']:
-                    location_uri = result['location']['s3Location']['uri']
-            
-            source = {
-                'content': content_text,
-                'score': result.get('score', 0.0),
-                'location': location_uri,
-                'metadata': result.get('metadata', {})
-            }
-            
-            logger.info(f"Processed source {i}: content_length={len(content_text)}, score={source['score']}, location={location_uri}")
-            sources.append(source)
-        
-        logger.info(f"Successfully retrieved {len(sources)} sources from Knowledge Base")
-        return sources
-        
-    except ClientError as e:
-        logger.error(f"Knowledge Base retrieval ClientError: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
-        logger.error(f"Full error response: {e.response}")
-        return []
-    except Exception as e:
-        logger.error(f"Unexpected error in Knowledge Base retrieval: {str(e)}")
-        logger.error(f"Error type: {type(e).__name__}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return []
-
-
-def invoke_bedrock_model(chat_request: ChatRequest) -> Dict[str, Any]:
-    """Invoke Bedrock model with optional Knowledge Base retrieval and conversation memory"""
-    try:
-        # Get conversation memory
-        memory = get_conversation_memory(chat_request.session_id, chat_request.user_id)
-        conversation_context = memory.get_context_string(chat_request.language)
-        
-        # Log conversation context for debugging
-        if conversation_context:
-            logger.info(f"Using conversation context with {len(memory.history)} previous exchanges")
-            logger.debug(f"Conversation context: {conversation_context[:200]}...")
-        else:
-            logger.info("No previous conversation context available")
-        
-        # Always retrieve from Knowledge Base - let the model decide how to use it
-        sources = retrieve_from_knowledge_base(chat_request.message)
-        
-        # Build the prompt (with or without RAG context) including conversation history
-        if sources:
-            prompt = build_rag_prompt_with_context(
-                chat_request.message, sources, conversation_context, chat_request.language
-            )
-            logger.info(f"Using RAG prompt with {len(sources)} technical references and conversation context, language: {chat_request.language}")
-        else:
-            # No sources - use the no-source prompt from build_rag_prompt_with_context
-            prompt = build_rag_prompt_with_context(
-                chat_request.message, sources, conversation_context, chat_request.language
-            )
-            logger.info(f"No sources available for query, using conversation context, language: {chat_request.language}")
-        
-        logger.info(f"Invoking Bedrock model {MODEL_ID}")
-        
-        # Prepare the request body for Nova 2 Lite - optimized for concise technical responses
-        request_body = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "text": prompt
+            'retrieveAndGenerateConfiguration': {
+                'type': 'KNOWLEDGE_BASE',
+                'knowledgeBaseConfiguration': {
+                    'knowledgeBaseId': KNOWLEDGE_BASE_ID,
+                    'modelArn': MODEL_ARN,
+                    'retrievalConfiguration': {
+                        'vectorSearchConfiguration': {
+                            'numberOfResults': 5,
                         }
-                    ]
+                    },
+                    'generationConfiguration': {
+                        'promptTemplate': {
+                            'textPromptTemplate': PROMPT_TEMPLATE
+                        },
+                        'inferenceConfig': {
+                            'textInferenceConfig': {
+                                'maxTokens': MAX_TOKENS,
+                                'temperature': TEMPERATURE,
+                                'topP': 0.9,
+                            }
+                        },
+                        'guardrailConfiguration': {
+                            'guardrailId': GUARDRAIL_ID,
+                            'guardrailVersion': GUARDRAIL_VERSION,
+                        }
+                    }
                 }
-            ],
-            "inferenceConfig": {
-                "maxTokens": 512,  # Reduced from 1024 to force more concise responses
-                "temperature": 0.5,  # Increased from 0.1 to allow more natural responses
-                "topP": 0.7,  # Reduced from 0.8 for more focused sampling
-            }
+            },
         }
         
-        # Invoke the model
-        response = bedrock_runtime.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps(request_body),
-            contentType='application/json',
-            accept='application/json'
-        )
-        
-        # Parse the response
-        response_body = json.loads(response['body'].read())
-        
-        # Extract the generated text
-        if 'output' in response_body and 'message' in response_body['output']:
-            generated_text = response_body['output']['message']['content'][0]['text']
+        # Only include sessionId if it looks like a valid Bedrock session ID
+        # Bedrock session IDs are UUIDs, not custom frontend-generated IDs
+        # If sessionId starts with frontend prefix like "session-", it's not a valid Bedrock session
+        if chat_request.session_id and not chat_request.session_id.startswith('session-'):
+            request_params['sessionId'] = chat_request.session_id
+            logger.info(f"Using existing Bedrock session: {chat_request.session_id}")
         else:
-            # Fallback for different response formats
-            generated_text = str(response_body)
+            logger.info("No valid Bedrock session - will create new session")
         
-        # Add this exchange to conversation memory
-        memory.add_exchange(chat_request.message, generated_text.strip())
-        logger.info(f"Added exchange to conversation memory. Total exchanges: {len(memory.history)}")
+        logger.debug(f"RetrieveAndGenerate request: {json.dumps(request_params, default=str)}")
         
-        # Format sources for response - cleaner format without excerpts and deduplicated by document
-        formatted_sources = []
-        seen_documents = {}
+        # Call RetrieveAndGenerate API
+        response = bedrock_agent_runtime.retrieve_and_generate(**request_params)
         
-        for source in sources:
-            # Extract document name from S3 location
-            location = source['location']
+        logger.info(f"RetrieveAndGenerate response received")
+        logger.info(f"Response keys: {list(response.keys())}")
+        logger.info(f"Citations present: {'citations' in response}, count: {len(response.get('citations', []))}")
+        logger.debug(f"Full response: {json.dumps(response, default=str)[:2000]}...")
+        
+        # Extract the generated response
+        output_text = response.get('output', {}).get('text', '')
+        session_id = response.get('sessionId', chat_request.session_id)
+        
+        # Extract citations/sources
+        citations = response.get('citations', [])
+        logger.info(f"Raw citations: {json.dumps(citations, default=str)[:500]}")
+        sources = extract_sources_from_citations(citations)
+        logger.info(f"Extracted {len(sources)} sources from citations")
+        
+        # Check guardrail action if present
+        guardrail_action = None
+        if 'guardrailAction' in response:
+            guardrail_action = response['guardrailAction']
+            logger.info(f"Guardrail action: {guardrail_action}")
+        
+        return {
+            'response': output_text,
+            'session_id': session_id,
+            'sources': sources,
+            'guardrail_action': guardrail_action
+        }
+        
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_message = e.response['Error']['Message']
+        logger.error(f"RetrieveAndGenerate API error: {error_code} - {error_message}")
+        
+        if error_code == 'ThrottlingException':
+            raise Exception("Service temporarily unavailable. Please try again later.")
+        elif error_code == 'ValidationException':
+            logger.error(f"Validation error details: {e.response}")
+            raise ValueError(f"Invalid request: {error_message}")
+        elif error_code == 'AccessDeniedException':
+            raise Exception("Access denied. Please check permissions.")
+        elif 'Guardrail' in error_message:
+            # Guardrail blocked the request
+            return {
+                'response': "I can only help with questions related to NASWA technical documentation. Please ask a question about the uploaded documents.",
+                'session_id': chat_request.session_id,
+                'sources': [],
+                'guardrail_action': 'BLOCKED'
+            }
+        else:
+            raise Exception(f"AI service error: {error_message}")
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in RetrieveAndGenerate: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise Exception("Internal service error")
+
+
+def extract_sources_from_citations(citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract and format sources from RetrieveAndGenerate citations
+    
+    Note: RetrieveAndGenerate API doesn't return relevance scores in citations,
+    so we don't include fake scores in the response.
+    """
+    seen_documents = {}
+    
+    for citation in citations:
+        retrieved_references = citation.get('retrievedReferences', [])
+        
+        for ref in retrieved_references:
+            # Extract location
+            location = ref.get('location', {})
+            s3_location = location.get('s3Location', {})
+            uri = s3_location.get('uri', '')
+            
+            # Extract document name from URI
             doc_name = 'Unknown Document'
-            if location:
+            if uri:
                 try:
-                    # Parse S3 URI to get document name
-                    parsed = urlparse(location)
+                    parsed = urlparse(uri)
                     if parsed.path:
                         doc_name = parsed.path.split('/')[-1]
-                        # Remove file extension for cleaner display
                         if '.' in doc_name:
                             doc_name = doc_name.rsplit('.', 1)[0]
                 except:
                     pass
             
-            # Only keep the highest scoring chunk per document
-            if doc_name not in seen_documents or source['score'] > seen_documents[doc_name]['score']:
+            # Deduplicate by document name
+            if doc_name not in seen_documents:
                 seen_documents[doc_name] = {
                     'document': doc_name,
-                    'score': round(source['score'], 3),
-                    'location': location,
-                    'downloadUrl': f"/document?path={location}" if location else None
+                    'location': uri,
+                    'downloadUrl': f"/document?path={uri}" if uri else None
                 }
-        
-        # Convert to list and sort by score (highest first)
-        formatted_sources = list(seen_documents.values())
-        formatted_sources.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Check if the model indicated this is conversational
-        response_text = generated_text.strip()
-        is_conversational = response_text.startswith('[CONVERSATIONAL]')
-        is_technical = response_text.startswith('[TECHNICAL]')
-        
-        # Remove the marker from the response
-        if is_conversational:
-            response_text = response_text.replace('[CONVERSATIONAL]', '').strip()
-            logger.info(f"Model indicated conversational response - hiding sources")
-        elif is_technical:
-            response_text = response_text.replace('[TECHNICAL]', '').strip()
-            logger.info(f"Model indicated technical response - showing sources")
-        
-        # Only show sources for technical responses
-        final_sources = [] if is_conversational else formatted_sources
-        
-        return {
-            'response': response_text,
-            'sources': final_sources
-        }
-        
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        logger.error(f"Bedrock API error: {error_code} - {e}")
-        
-        if error_code == 'ThrottlingException':
-            raise Exception("Service temporarily unavailable. Please try again later.")
-        elif error_code == 'ValidationException':
-            raise ValueError("Invalid request parameters")
-        elif error_code == 'ModelNotReadyException':
-            raise Exception("Model is not ready. Please try again later.")
-        else:
-            raise Exception("AI service error. Please try again.")
     
-    except Exception as e:
-        logger.error(f"Unexpected error invoking Bedrock model: {e}")
-        raise Exception("Internal service error")
+    # Convert to list
+    sources = list(seen_documents.values())
+    
+    return sources
 
 
 def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -535,7 +386,6 @@ def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
             if file_extension == 'pdf':
                 headers['Content-Type'] = 'application/pdf'
                 logger.info(f"PDF detected - serving for browser viewing")
-                # No Content-Disposition header = view in browser
             
             # Word docs and other files: Force download
             else:
@@ -613,7 +463,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return handle_document_request(event)
     
     logger.info(f"Processing chat request: {request_id}")
-    logger.info(f"Environment variables - MODEL_ID: {MODEL_ID}, KNOWLEDGE_BASE_ID: {KNOWLEDGE_BASE_ID}, USE_KNOWLEDGE_BASE: {USE_KNOWLEDGE_BASE}")
+    logger.info(f"Environment - MODEL_ARN: {MODEL_ARN}, KNOWLEDGE_BASE_ID: {KNOWLEDGE_BASE_ID}, GUARDRAIL_ID: {GUARDRAIL_ID}")
     
     try:
         # Parse and validate request
@@ -623,20 +473,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"Chat request - User: {chat_request.user_id}, Session: {chat_request.session_id}, Language: {chat_request.language}")
         logger.info(f"User message: {chat_request.message[:100]}...")
         
-        # Invoke Bedrock model directly
-        model_result = invoke_bedrock_model(chat_request)
+        # Invoke RetrieveAndGenerate API
+        result = invoke_retrieve_and_generate(chat_request)
         
         # Create response
         chat_response = ChatResponse(
-            response=model_result['response'],
-            session_id=chat_request.session_id,
-            sources=model_result['sources']
+            response=result['response'],
+            session_id=result['session_id'],
+            sources=result['sources'],
+            guardrail_action=result.get('guardrail_action')
         )
         
-        # Emit success metrics - just log for now
+        # Log success metrics
         processing_time = (datetime.utcnow() - start_time).total_seconds()
         logger.info(f"Successfully processed request {request_id} in {processing_time:.2f}s")
         logger.info(f"Response length: {len(chat_response.response)}, Sources count: {len(chat_response.sources)}")
+        if chat_response.guardrail_action:
+            logger.info(f"Guardrail action: {chat_response.guardrail_action}")
         
         return {
             'statusCode': 200,

@@ -12,7 +12,6 @@ export interface ChatResponse {
   sessionId: string;
   sources: Array<{
     document: string;
-    score: number;
     location: string;
     downloadUrl: string | null;
   }>;

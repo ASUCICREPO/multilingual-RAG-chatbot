@@ -13,7 +13,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import { NagSuppressions } from 'cdk-nag';
 
 export class BedrockChatbotBackendStack extends cdk.Stack {
-  // ⚠️  WARNING: ALL RESOURCES HAVE DESTROY REMOVAL POLICY
+  // WARNING: ALL RESOURCES HAVE DESTROY REMOVAL POLICY
   // This stack is configured for easy cleanup - all resources will be DESTROYED on stack deletion
   // This includes S3 buckets, Bedrock Knowledge Bases, vector embeddings, and user data
   // Use with caution in production environments!
@@ -25,6 +25,7 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
   public readonly bedrockServiceRole: iam.Role;
   public readonly knowledgeBase: bedrock.CfnKnowledgeBase;
   public readonly dataSource: bedrock.CfnDataSource;
+  public readonly guardrail: bedrock.CfnGuardrail;
 
   public readonly agentHandlerFunction: lambda.Function;
   public readonly userPool: cognito.UserPool;
@@ -240,23 +241,125 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
     this.dataSource.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
     // ========================================
+    // BEDROCK GUARDRAILS
+    // ========================================
+
+    // Create Bedrock Guardrail for content filtering and topic control
+    this.guardrail = new bedrock.CfnGuardrail(this, 'ChatbotGuardrail', {
+      name: `bedrock-chatbot-guardrail-${environment}`,
+      description: 'Guardrail for chatbot - filters off-topic content and ensures grounded responses',
+      blockedInputMessaging: 'I can only help with questions related to the uploaded technical documentation. Please ask a question about the documents.',
+      blockedOutputsMessaging: 'I apologize, but I cannot provide information on that topic. Please ask questions related to the uploaded technical documentation.',
+      
+      // Content policy - filter harmful content
+      contentPolicyConfig: {
+        filtersConfig: [
+          {
+            type: 'HATE',
+            inputStrength: 'HIGH',
+            outputStrength: 'HIGH',
+          },
+          {
+            type: 'INSULTS',
+            inputStrength: 'HIGH',
+            outputStrength: 'HIGH',
+          },
+          {
+            type: 'SEXUAL',
+            inputStrength: 'HIGH',
+            outputStrength: 'HIGH',
+          },
+          {
+            type: 'VIOLENCE',
+            inputStrength: 'HIGH',
+            outputStrength: 'HIGH',
+          },
+          {
+            type: 'MISCONDUCT',
+            inputStrength: 'HIGH',
+            outputStrength: 'HIGH',
+          },
+          {
+            type: 'PROMPT_ATTACK',
+            inputStrength: 'HIGH',
+            outputStrength: 'NONE', // Output doesn't apply for prompt attacks
+          },
+        ],
+      },
+
+      // Topic policy - block off-topic conversations
+      topicPolicyConfig: {
+        topicsConfig: [
+          {
+            name: 'Politics',
+            definition: 'Questions about political parties, elections, politicians, government policies, political opinions, or political debates.',
+            examples: [
+              'Who is the president?',
+              'What do you think about the government?',
+              'Which political party is better?',
+              'What are your views on immigration policy?',
+            ],
+            type: 'DENY',
+          },
+          {
+            name: 'Off-Topic-General-Knowledge',
+            definition: 'Questions about unrelated topics like geography, cooking, sports, entertainment, or trivia.',
+            examples: [
+              'What is the capital of France?',
+              'How do I cook pasta?',
+              'Tell me a joke',
+              'Who won the World Cup?',
+            ],
+            type: 'DENY',
+          },
+          {
+            name: 'Personal-Assistance',
+            definition: 'Requests for personal tasks unrelated to technical documentation.',
+            examples: [
+              'Help me write an email',
+              'Write a poem for me',
+              'Plan my vacation',
+            ],
+            type: 'DENY',
+          },
+        ],
+      },
+
+      // Note: Contextual grounding policy removed due to strict response length limits
+      // (max 5 text units) which conflicts with longer technical responses
+
+      // Word policy - block specific unwanted terms
+      wordPolicyConfig: {
+        managedWordListsConfig: [
+          {
+            type: 'PROFANITY',
+          },
+        ],
+      },
+    });
+
+    // Apply DESTROY removal policy to Guardrail
+    this.guardrail.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
+    // ========================================
     // LAMBDA AGENT HANDLER
     // ========================================
 
-    // Lambda function for handling chat requests with direct Bedrock API + Knowledge Base
+    // Lambda function for handling chat requests with RetrieveAndGenerate API + Guardrails
     this.agentHandlerFunction = new lambda.Function(this, 'AgentHandlerFunction', {
       functionName: `bedrock-chatbot-handler-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.lambda_handler',
       code: lambda.Code.fromAsset('lambda/agent-handler'),
-      timeout: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(60), // Increased timeout for RetrieveAndGenerate
       memorySize: 512,
       environment: {
-        MODEL_ID: 'global.amazon.nova-2-lite-v1:0',
+        MODEL_ARN: `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/global.amazon.nova-2-lite-v1:0`,
         KNOWLEDGE_BASE_ID: this.knowledgeBase.attrKnowledgeBaseId,
-        USE_KNOWLEDGE_BASE: 'true',
-        MAX_TOKENS: '2048',
-        TEMPERATURE: '0.3',  // Lower temperature for more focused, direct responses
+        GUARDRAIL_ID: this.guardrail.attrGuardrailId,
+        GUARDRAIL_VERSION: 'DRAFT',
+        MAX_TOKENS: '1024',
+        TEMPERATURE: '0.3',
         LOG_LEVEL: isDevelopment ? 'DEBUG' : 'INFO',
       },
       logGroup: new logs.LogGroup(this, 'AgentHandlerLogGroup', {
@@ -264,20 +367,23 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
         retention: logs.RetentionDays.ONE_WEEK,
         removalPolicy: cdk.RemovalPolicy.DESTROY, // Always destroy for easy cleanup
       }),
-      description: 'Lambda function for processing chat requests through direct Bedrock API with Knowledge Base',
+      description: 'Lambda function for processing chat requests through RetrieveAndGenerate API with Guardrails',
     });
 
     // Apply DESTROY removal policy to Lambda function
     this.agentHandlerFunction.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
 
-    // Grant Lambda permissions to invoke Bedrock models and retrieve from Knowledge Base
+    // Grant Lambda permissions for RetrieveAndGenerate API with Guardrails
     this.agentHandlerFunction.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
           'bedrock:InvokeModel',
-          'bedrock:Retrieve',  // Add this permission for Knowledge Base retrieval
+          'bedrock:Retrieve',
+          'bedrock:RetrieveAndGenerate',
+          'bedrock:GetInferenceProfile',
           'bedrock-agent-runtime:Retrieve',
+          'bedrock-agent-runtime:RetrieveAndGenerate',
         ],
         resources: [
           // Global inference profile
@@ -288,6 +394,20 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
           `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-*`,
           // Knowledge Base
           this.knowledgeBase.attrKnowledgeBaseArn,
+        ],
+      })
+    );
+
+    // Grant Lambda permissions to use Bedrock Guardrails
+    this.agentHandlerFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'bedrock:ApplyGuardrail',
+          'bedrock:GetGuardrail',
+        ],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:guardrail/${this.guardrail.attrGuardrailId}`,
         ],
       })
     );
@@ -669,6 +789,17 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'DataSourceId', {
       value: this.dataSource.attrDataSourceId,
       description: 'ID of the Bedrock Data Source',
+    });
+
+    new cdk.CfnOutput(this, 'GuardrailId', {
+      value: this.guardrail.attrGuardrailId,
+      description: 'ID of the Bedrock Guardrail',
+      exportName: `${this.stackName}-GuardrailId`,
+    });
+
+    new cdk.CfnOutput(this, 'GuardrailArn', {
+      value: this.guardrail.attrGuardrailArn,
+      description: 'ARN of the Bedrock Guardrail',
     });
 
     new cdk.CfnOutput(this, 'AgentHandlerFunctionName', {
