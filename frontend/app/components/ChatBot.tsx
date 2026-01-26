@@ -58,9 +58,9 @@ export default function ChatBot() {
         const result = await callChatAPI(text, language);
         setMessages(prev => {
           const filtered = prev.filter(m => m.type !== 'typing');
-          console.log('=== DEBUG: Raw AI Response ===');
-          console.log(result.response);
-          console.log('=== End Debug ===');
+          // console.log('=== DEBUG: Raw AI Response ===');
+          // console.log(result.response);
+          // console.log('=== End Debug ===');
           return [...filtered, { 
             type: 'bot', 
             text: result.response,
