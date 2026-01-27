@@ -40,7 +40,7 @@ USE_KNOWLEDGE_BASE = os.getenv('USE_KNOWLEDGE_BASE', 'true').lower() == 'true'
 PROMPT_TEMPLATE = """You are a technical assistant. Answer questions using the provided document context.
 
 QUERY TYPE (determine silently, don't output):
-- FOLLOW_UP: References previous response ("provide as bullets", "explain more", "summarize that") → Use conversation history, ignore new documents if topic differs.
+- FOLLOW_UP: References previous response ("provide as bullets", "explain more", "summarize that") → Use conversation history from this session.
 - TECHNICAL: New question about documents → Use document context.
 - CONVERSATIONAL: Greetings/thanks ("hello", "thank you") → Respond briefly and naturally.
 
@@ -49,9 +49,6 @@ STRICT RULES:
 2. Do NOT use headers, bullet points, or long lists unless specifically asked.
 3. Use ONLY information from the documents. Do not add external information.
 4. If documents don't contain relevant information, say so briefly.
-
-CONVERSATION HISTORY:
-$conversation$
 
 DOCUMENT CONTEXT:
 $search_results$
@@ -322,7 +319,7 @@ def extract_sources_from_citations(citations: List[Dict[str, Any]]) -> List[Dict
 
 
 def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle document requests - view PDFs in browser, download Word docs"""
+    """Handle document requests - generate pre-signed URLs for direct S3 access"""
     try:
         # Get the document path from query parameters
         query_params = event.get('queryStringParameters') or {}
@@ -363,41 +360,48 @@ def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
         
         bucket_name, object_key = s3_parts
         
-        # Get the document from S3
+        # Get filename for Content-Disposition
+        filename = object_key.split('/')[-1]
+        file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
+        
+        logger.info(f"Generating pre-signed URL for: bucket={bucket_name}, key={object_key}, filename={filename}")
+        
+        # Determine Content-Disposition based on file type
+        # PDFs: inline (view in browser), Others: attachment (download)
+        if file_extension == 'pdf':
+            content_disposition = 'inline'
+            logger.info(f"PDF detected - generating URL for browser viewing")
+        else:
+            content_disposition = f'attachment; filename="{filename}"'
+            logger.info(f"Non-PDF detected - generating URL for download with filename: {filename}")
+        
+        # Generate pre-signed URL (valid for 60 minutes)
         try:
-            response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
-            content = response['Body'].read()
-            content_type = response.get('ContentType', 'application/octet-stream')
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': object_key,
+                    'ResponseContentDisposition': content_disposition
+                },
+                ExpiresIn=3600  # 60 minutes
+            )
             
-            # Get filename for download
-            filename = object_key.split('/')[-1]
-            file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
-            
-            logger.info(f"Document request - object_key: {object_key}, filename: {filename}, extension: {file_extension}")
-            
-            # Determine headers based on file type
-            headers = {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-                'Access-Control-Allow-Methods': 'GET,OPTIONS'
-            }
-            
-            # PDFs: View in browser (no download header)
-            if file_extension == 'pdf':
-                headers['Content-Type'] = 'application/pdf'
-                logger.info(f"PDF detected - serving for browser viewing")
-            
-            # Word docs and other files: Force download
-            else:
-                headers['Content-Type'] = content_type
-                headers['Content-Disposition'] = f'attachment; filename="{filename}"'
-                logger.info(f"Non-PDF detected - serving for download with filename: {filename}")
+            logger.info(f"Successfully generated pre-signed URL for {filename}")
             
             return {
                 'statusCode': 200,
-                'headers': headers,
-                'body': base64.b64encode(content).decode('utf-8'),
-                'isBase64Encoded': True
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+                    'Access-Control-Allow-Methods': 'GET,OPTIONS'
+                },
+                'body': json.dumps({
+                    'url': presigned_url,
+                    'filename': filename,
+                    'expiresIn': 3600
+                })
             }
             
         except ClientError as e:
@@ -421,14 +425,14 @@ def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'Access denied to document'})
                 }
             else:
-                logger.error(f"S3 error retrieving document: {e}")
+                logger.error(f"S3 error generating pre-signed URL: {e}")
                 return {
                     'statusCode': 500,
                     'headers': {
                         'Content-Type': 'application/json',
                         'Access-Control-Allow-Origin': '*'
                     },
-                    'body': json.dumps({'error': 'Failed to retrieve document'})
+                    'body': json.dumps({'error': 'Failed to generate document URL'})
                 }
                 
     except Exception as e:
@@ -445,7 +449,7 @@ def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Main Lambda handler for chat requests and document downloads
+    Main Lambda handler for chat requests, document downloads, and health checks
     
     Args:
         event: API Gateway event
@@ -457,8 +461,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     request_id = context.aws_request_id
     start_time = datetime.utcnow()
     
-    # Check if this is a document download request
+    # Check the request path
     path = event.get('rawPath') or event.get('path', '')
+    
+    # Handle health check
+    if path == '/health':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'status': 'healthy',
+                'service': 'bedrock-chatbot-backend',
+                'timestamp': request_id
+            })
+        }
+    
+    # Handle document download request
     if path == '/document':
         return handle_document_request(event)
     

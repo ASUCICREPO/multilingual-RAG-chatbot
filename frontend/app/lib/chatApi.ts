@@ -91,7 +91,7 @@ export class ChatAPI {
       // Get authentication token
       const token = await this.authService.getToken();
 
-      // Make API call to get document (backend will handle view vs download based on file type)
+      // Make API call to get pre-signed URL
       const response = await fetch(`${config.api.baseUrl}/document?path=${encodeURIComponent(documentPath)}`, {
         method: 'GET',
         headers: {
@@ -116,61 +116,37 @@ export class ChatAPI {
             throw new Error(`Document access failed after retry: ${retryResponse.status}`);
           }
 
-          await this.handleDocumentResponse(retryResponse);
+          const retryData = await retryResponse.json();
+          this.openPresignedUrl(retryData);
           return;
         }
         
         throw new Error(`Document access failed: ${response.status}`);
       }
 
-      await this.handleDocumentResponse(response);
+      // Backend returns JSON with pre-signed URL
+      const data = await response.json();
+      this.openPresignedUrl(data);
     } catch (error) {
       console.error('Document access error:', error);
       throw error;
     }
   }
 
-  private async handleDocumentResponse(response: Response): Promise<void> {
-    const contentDisposition = response.headers.get('Content-Disposition');
-    const contentType = response.headers.get('Content-Type') || '';
+  private openPresignedUrl(data: { url: string; filename: string; expiresIn: number }): void {
+    // Determine if it's a PDF based on filename extension
+    const isPdf = data.filename.toLowerCase().endsWith('.pdf');
     
-    console.log('Content-Disposition header:', contentDisposition);
-    console.log('Content-Type header:', contentType);
-    
-    // Extract filename from Content-Disposition header
-    let filename = 'document';
-    if (contentDisposition) {
-      // Simple regex to extract filename from: attachment; filename="Requirements.docx"
-      const match = contentDisposition.match(/filename="([^"]+)"/);
-      console.log('Regex match result:', match);
-      if (match && match[1]) {
-        filename = match[1];
-      }
-    }
-    
-    console.log('Final filename:', filename);
-    
-    const blob = await response.blob();
-    
-    // Check if it's a PDF (should open in browser)
-    if (contentType.includes('application/pdf') && !contentDisposition?.includes('attachment')) {
+    if (isPdf) {
       // PDF - open in new tab for viewing
-      const url = URL.createObjectURL(blob);
-      const newWindow = window.open(url, '_blank');
+      const newWindow = window.open(data.url, '_blank');
       if (!newWindow) {
         // Fallback if popup was blocked
-        window.location.href = url;
+        window.location.href = data.url;
       }
     } else {
-      // Other files (Word docs, etc.) - trigger download with correct filename
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Other files - open the pre-signed URL (S3 handles download with Content-Disposition)
+      window.open(data.url, '_blank');
     }
   }
 

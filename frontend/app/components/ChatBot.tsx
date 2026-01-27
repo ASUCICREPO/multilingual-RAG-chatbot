@@ -202,6 +202,27 @@ export default function ChatBot() {
               <option value="english" className="text-gray-800">English</option>
               <option value="spanish" className="text-gray-800">Español</option>
             </select>
+            
+            {/* Refresh Button */}
+            <button
+              onClick={() => {
+                const welcomeMessages = {
+                  english: "Hello! I'm the NASWA Assistant. How can I help you today?",
+                  spanish: "¡Hola! Soy el Asistente de NASWA. ¿Cómo puedo ayudarte hoy?"
+                };
+                setMessages([{ type: 'bot', text: welcomeMessages[language] }]);
+                setShowButtons(true);
+                setSessionId(`session-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`);
+              }}
+              className="text-white hover:bg-white/20 rounded p-1 transition-colors"
+              aria-label="Refresh conversation"
+              title={language === 'english' ? 'Start new conversation' : 'Iniciar nueva conversación'}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+            
             <button
               onClick={() => setIsOpen(false)}
               className="text-white hover:bg-white/20 rounded p-1 transition-colors"

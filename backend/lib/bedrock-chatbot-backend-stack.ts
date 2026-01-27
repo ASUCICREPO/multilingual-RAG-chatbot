@@ -598,35 +598,6 @@ export class BedrockChatbotBackendStack extends cdk.Stack {
       }
     );
 
-    // Health check function
-    const healthCheckFunction = new lambda.Function(this, 'HealthCheckFunction', {
-      functionName: `bedrock-chatbot-health-${environment}`,
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'index.handler',
-      code: lambda.Code.fromInline(`
-import json
-
-def handler(event, context):
-    return {
-        'statusCode': 200,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
-        'body': json.dumps({
-            'status': 'healthy',
-            'service': 'bedrock-chatbot-backend',
-            'timestamp': context.aws_request_id
-        })
-    }
-      `),
-      timeout: cdk.Duration.seconds(10),
-      description: 'Health check endpoint for the chatbot API',
-    });
-
-    // Apply DESTROY removal policy to Health Check function
-    healthCheckFunction.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
-
     // Chat endpoint with authentication
     this.httpApi.addRoutes({
       path: '/chat',
@@ -647,29 +618,16 @@ def handler(event, context):
     this.httpApi.addRoutes({
       path: '/health',
       methods: [apigateway.HttpMethod.GET],
-      integration: new integrations.HttpLambdaIntegration(
-        'HealthCheckIntegration',
-        healthCheckFunction
-      ),
+      integration: lambdaIntegration,
     });
 
-    // CDK Nag suppressions for API Gateway and Health Check
+    // CDK Nag suppressions for API Gateway
     NagSuppressions.addResourceSuppressions(
       this.httpApi,
       [
         {
           id: 'AwsSolutions-APIG1',
           reason: 'Access logging is not required for this development/demo API. Can be enabled in production if needed.',
-        },
-      ],
-    );
-
-    NagSuppressions.addResourceSuppressions(
-      healthCheckFunction,
-      [
-        {
-          id: 'AwsSolutions-L1',
-          reason: 'Python 3.12 is the latest available runtime for Lambda at the time of implementation',
         },
       ],
     );
