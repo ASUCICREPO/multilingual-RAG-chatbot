@@ -367,13 +367,16 @@ def handle_document_request(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Generating pre-signed URL for: bucket={bucket_name}, key={object_key}, filename={filename}")
         
         # Determine Content-Disposition based on file type
-        # PDFs: inline (view in browser), Others: attachment (download)
-        if file_extension == 'pdf':
+        # PDFs and Office docs: inline (view in browser/viewer)
+        # Others: attachment (download)
+        office_extensions = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt']
+        
+        if file_extension == 'pdf' or file_extension in office_extensions:
             content_disposition = 'inline'
-            logger.info(f"PDF detected - generating URL for browser viewing")
+            logger.info(f"{file_extension.upper()} detected - generating URL for browser viewing")
         else:
             content_disposition = f'attachment; filename="{filename}"'
-            logger.info(f"Non-PDF detected - generating URL for download with filename: {filename}")
+            logger.info(f"Other file type detected - generating URL for download with filename: {filename}")
         
         # Generate pre-signed URL (valid for 60 minutes)
         try:

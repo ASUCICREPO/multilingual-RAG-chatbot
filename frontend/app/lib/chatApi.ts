@@ -134,18 +134,19 @@ export class ChatAPI {
   }
 
   private openPresignedUrl(data: { url: string; filename: string; expiresIn: number }): void {
-    // Determine if it's a PDF based on filename extension
-    const isPdf = data.filename.toLowerCase().endsWith('.pdf');
+    const fileExtension = data.filename.toLowerCase().split('.').pop() || '';
+    const isPdf = fileExtension === 'pdf';
+    const isOfficeDoc = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt'].includes(fileExtension);
     
     if (isPdf) {
-      // PDF - open in new tab for viewing
-      const newWindow = window.open(data.url, '_blank');
-      if (!newWindow) {
-        // Fallback if popup was blocked
-        window.location.href = data.url;
-      }
+      // PDF - open directly in new tab for viewing
+      window.open(data.url, '_blank');
+    } else if (isOfficeDoc) {
+      // Office documents - use Microsoft Office Online Viewer
+      const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(data.url)}`;
+      window.open(viewerUrl, '_blank');
     } else {
-      // Other files - open the pre-signed URL (S3 handles download with Content-Disposition)
+      // Other files - open directly (S3 handles download with Content-Disposition)
       window.open(data.url, '_blank');
     }
   }
