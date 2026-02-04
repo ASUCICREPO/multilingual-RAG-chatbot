@@ -426,18 +426,26 @@ The `/chat` endpoint uses Amazon Bedrock for response generation:
 | Parameter | Value |
 |-----------|-------|
 | Model | `global.amazon.nova-2-lite-v1:0` |
-| Max Tokens | 512 |
-| Temperature | 0.5 |
-| Top P | 0.7 |
+| Max Tokens | 1024 |
+| Temperature | 0.3 |
+
+### Content Filtering
+
+The API uses Amazon Bedrock Guardrails for content moderation:
+
+| Feature | Configuration |
+|---------|---------------|
+| Content Filtering | HATE, INSULTS, SEXUAL, VIOLENCE, MISCONDUCT, PROMPT_ATTACK (HIGH strength) |
+| Topic Denial | Politics, Off-Topic-General-Knowledge, Personal-Assistance |
+| Word Policy | Profanity blocking enabled |
 
 ### Conversation Memory
 
-The API maintains conversation context:
+The API maintains conversation context using Bedrock's built-in session management:
 
 | Parameter | Value |
 |-----------|-------|
-| History Length | Last 5 exchanges |
-| Storage | In-memory (Lambda container) |
+| Session Management | Bedrock RetrieveAndGenerate API |
 | Session Scope | Per session ID |
 
 ---

@@ -436,14 +436,12 @@ After uploading documents, sync the Knowledge Base to process and index them.
 
 | Variable | Value | Description |
 |----------|-------|-------------|
-| `MODEL_ID` | `global.amazon.nova-2-lite-v1:0` | Bedrock model identifier |
+| `MODEL_ARN` | `arn:aws:bedrock:us-east-1::inference-profile/global.amazon.nova-2-lite-v1:0` | Bedrock model inference profile |
 | `KNOWLEDGE_BASE_ID` | (from deployment) | Knowledge Base ID for RAG |
-| `USE_KNOWLEDGE_BASE` | `true` | Enable RAG retrieval |
-| `MAX_TOKENS` | `2048` | Max tokens (env var) |
-| `TEMPERATURE` | `0.3` | Temperature (env var) |
-| `LOG_LEVEL` | `DEBUG` | Logging verbosity |
-
-**Note:** Actual inference uses optimized values: `maxTokens=512`, `temperature=0.5`, `topP=0.7` for concise responses.
+| `GUARDRAIL_ID` | (from deployment) | Bedrock Guardrail ID for content filtering |
+| `GUARDRAIL_VERSION` | `DRAFT` | Guardrail version |
+| `MAX_TOKENS` | `1024` | Maximum tokens for response generation |
+| `TEMPERATURE` | `0.3` | Model temperature for response variability |
 
 ---
 
