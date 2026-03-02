@@ -27,7 +27,7 @@
     "fast-check": "^4.5.2"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.233.0",
+    "aws-cdk-lib": "2.241.0",
     "constructs": "^10.4.4",
     "@cdklabs/generative-ai-cdk-constructs": "^0.1.312",
     "cdk-nag": "^2.37.55",
