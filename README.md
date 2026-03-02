@@ -197,7 +197,7 @@ multilingual-RAG-chatbot/
 
 ## Credits
 
-This application was architected and developed by [Sahajpreet Singh Khasria](https://www.linkedin.com/in/sahajpreet/), [Apoorv Singh](https://www.linkedin.com/in/apoorv16/), and [Lahari Shakthi Arun](https://www.linkedin.com/in/shakthiarun22/) with solutions architect [Arun Arunachalam](https://www.linkedin.com/in/arunarunachalam/), program manager [Thomas Orr](https://www.linkedin.com/in/thomas-orr/) and product manager [Rachel Hayden](https://www.linkedin.com/in/rachelhayden/). Thanks to the ASU Cloud Innovation Center Technical for their guidance and support.
+This application was architected and developed by [Sahajpreet Singh Khasria](https://www.linkedin.com/in/sahajpreet/), [Apoorv Singh](https://www.linkedin.com/in/apoorv16/), and [Lahari Shakthi Arun](https://www.linkedin.com/in/shakthiarun22/) with solutions architect [Arun Arunachalam](https://www.linkedin.com/in/arunarunachalam/), program manager [Tom Orr](https://www.linkedin.com/in/thomas-orr/) and product manager [Rachel Hayden](https://www.linkedin.com/in/rachelhayden/). Thanks to the ASU Cloud Innovation Center Technical for their guidance and support.
 
 ## License
 
