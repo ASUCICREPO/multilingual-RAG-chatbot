@@ -1,608 +1,173 @@
-# Multilingual RAG Chatbot - Deployment Guide
+# Deployment Guide
 
-This guide provides step-by-step instructions to deploy the Multilingual RAG Chatbot in your AWS account. The deployment is done through AWS CloudShell with an automated deployment script.
+**Region:** only **US East (N. Virginia) — `us-east-1`**.  
+**Time:** about 20–30 minutes, mostly waiting for an automated build.
 
-**Estimated Time:** 20-30 minutes
+**Goal:** After this guide you will have a working API, Cognito app client, hosted frontend URL, and (after the follow-up steps) a login user and indexed documents so the chat can answer from your files.
 
----
+Read **[Prerequisites](./prerequisites.md)** first so your account can create the required AWS resources and use Bedrock.
 
-## ⚠️ Important: Complete Prerequisites First
-
-**Before starting deployment, you MUST complete all prerequisites:**
-
-👉 **[Read the Prerequisites Guide](./prerequisites.md)** 👈
-
-The prerequisites guide covers:
-- AWS account requirements and region selection (us-east-1 only)
-- **Bedrock Model Access** - Automatically enabled for Nova models
-- AWS CLI and CDK installation
-- IAM permissions for deployment
+**Resource names in this guide** (for example `bedrock-chatbot-users-development`) assume the default CDK **environment** `development`. If you deploy with another environment (for example `--context environment=prod`), replace **`development`** with that value in Cognito, S3, Bedrock, and Lambda names.
 
 ---
 
-## Deployment Overview
+## Before you run anything
 
-The deployment consists of 4 main phases:
+1. Sign in to the **AWS Console** and set the region in the top bar to **`us-east-1`**.
+2. Confirm your IAM identity can create roles, CloudFormation stacks, CodeBuild projects, Amplify apps, and use Bedrock in this account (see prerequisites).
+3. Decide **where** you will run commands:
+   - **Recommended:** [AWS CloudShell](https://docs.aws.amazon.com/cloudshell/latest/userguide/welcome.html) in **`us-east-1`** — includes **AWS CLI** and **Git**. Nothing to install.
+   - **Alternative:** a terminal on your computer with **[AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)** installed and configured (`aws configure`, default region **`us-east-1`**) and **Git** installed.
 
-1. **Phase 1:** Create IAM Service Role
-2. **Phase 2:** Create Amplify Application for Frontend Hosting
-3. **Phase 3:** Create CodeBuild Project for Unified Deployment
-4. **Phase 4:** Execute Build (CDK Backend + Next.js Frontend)
-
-After deployment, you'll need to (all via AWS Console):
-1. Create user accounts (Cognito)
-2. Upload documents to S3 bucket
-3. Sync the Knowledge Base (Bedrock)
-4. Test and access the application
+You **cannot** follow the main steps below without AWS CLI + Git on the machine where you run them.
 
 ---
 
-## Phase 1: Create IAM Service Role
+## Main deployment: `deploy.sh` → CodeBuild
 
-### Step 1.1: Open AWS CloudShell
+**What you are doing:** You run a small script on your side. That script uses the AWS CLI to create/update an IAM role, an Amplify app, and a CodeBuild project, then **starts one CodeBuild job**. That job (not your laptop) runs `cdk deploy`, builds the Next.js app, and uploads it to Amplify. You do **not** need Node.js or CDK installed locally for this path.
 
-⚠️ **Important**: This project only supports **us-east-1** region.
+### Path A — AWS CloudShell (recommended)
 
-1. In the AWS Console, **ensure you are in the us-east-1 region** (check top-right corner)
-2. Click the **CloudShell icon** (terminal icon in the top navigation bar)
-3. Wait for CloudShell to initialize
-4. Configure AWS CLI (if not already configured):
-   ```bash
-   aws configure
-   ```
-   When prompted, enter:
-   - **AWS Access Key ID**: Your access key
-   - **AWS Secret Access Key**: Your secret key
-   - **Default region name**: `us-east-1`
-   - **Default output format**: `json` (or press Enter for default)
+1. In the console, confirm the region is **`us-east-1`**.
+2. Open **CloudShell**: click the terminal icon in the top navigation bar. Wait until the prompt appears.
+3. Check that the CLI sees your account (optional but useful):
 
-   > **Note**: CloudShell may already have credentials configured. You can skip this step if `aws sts get-caller-identity` works.
-
-5. Verify configuration:
    ```bash
    aws sts get-caller-identity
    ```
-   You should see your account ID and user/role ARN.
 
-### Step 1.2: Clone the Repository
+   You should see an `Account` and `Arn`. If this fails, fix credentials before continuing.
 
-```bash
-git clone https://github.com/ASUCICREPO/multilingual-RAG-chatbot.git
-cd multilingual-RAG-chatbot
-```
+4. Clone this repository and enter the folder:
 
-### Step 1.3: Make Deploy Script Executable
-
-```bash
-chmod +x ./deploy.sh
-```
-
-### Step 1.4: Run Deployment Script
-
-```bash
-./deploy.sh
-```
-
-The deployment will begin automatically. User credentials will be configured after deployment via the AWS Console (see [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)).
-
-### Step 1.5: IAM Service Role Creation
-
-The script automatically creates an IAM service role for CodeBuild:
-
-- **Role Name:** `bedrock-chatbot-service-role`
-- **Permissions:** CloudFormation, Lambda, S3, S3 Vectors, Bedrock, Amplify, CodeBuild, API Gateway, Cognito, and more
-
-**What happens:**
-1. Script checks if role already exists
-2. If not, creates role with CodeBuild trust policy
-3. Attaches custom deployment policy with required permissions
-4. Waits 10 seconds for IAM propagation
-
-**Expected output:**
-```
-[INFO] 🔐 Phase 1: Creating IAM Service Role...
-[INFO] Checking for IAM role: bedrock-chatbot-service-role
-[INFO] Creating IAM role: bedrock-chatbot-service-role
-[INFO] Attaching custom deployment policy...
-[SUCCESS] IAM role created
-[INFO] Waiting for IAM role to propagate for 10 seconds...
-```
-
----
-
-## Phase 2: Create Amplify Application
-
-The script automatically creates an AWS Amplify application for frontend hosting.
-
-### Step 2.1: Amplify App Creation
-
-**What happens:**
-1. Script checks if app named `BedrockChatbot` already exists
-2. If not, creates new Amplify app with WEB_COMPUTE platform
-3. Creates `main` branch for production deployment
-
-**Expected output:**
-```
-[AMPLIFY] 🌐 Phase 2: Creating Amplify Application for Static Hosting...
-[INFO] Creating Amplify app for static hosting: BedrockChatbot
-[SUCCESS] Amplify app created with ID: d1234abcdef
-[INFO] Creating main branch...
-[SUCCESS] main branch created
-```
-
-### Step 2.2: Verify Amplify App (Optional)
-
-You can verify the app was created:
-
-1. Go to **AWS Amplify Console**: https://console.aws.amazon.com/amplify/
-2. Look for app named `BedrockChatbot`
-3. Verify `main` branch exists
-
----
-
-## Phase 3: Create CodeBuild Project
-
-The script creates a unified CodeBuild project that deploys both backend and frontend.
-
-### Step 3.1: CodeBuild Project Creation
-
-**What happens:**
-1. Script creates/updates CodeBuild project named `bedrock-chatbot-deployment`
-2. Configures environment variables:
-   - `AMPLIFY_APP_ID` - For frontend deployment
-   - `CDK_DEFAULT_REGION` - AWS region
-   - `CDK_DEFAULT_ACCOUNT` - AWS account ID
-3. Links to GitHub repository and `buildspec.yml`
-
-**Expected output:**
-```
-[CODEBUILD] 🏗️ Phase 3: Creating Unified CodeBuild Project...
-[INFO] Checking for CodeBuild project 'bedrock-chatbot-deployment'...
-[INFO] Creating unified CodeBuild project 'bedrock-chatbot-deployment'...
-[SUCCESS] Unified CodeBuild project 'bedrock-chatbot-deployment' created.
-```
-
----
-
-## Phase 4: Execute Unified Deployment
-
-The script starts the CodeBuild job which deploys all infrastructure.
-
-### Step 4.1: Build Execution
-
-**What happens:**
-1. Script starts CodeBuild job
-2. Streams logs showing deployment progress
-3. Monitors build status until completion
-
-**Expected output:**
-```
-[CODEBUILD] 🚀 Phase 4: Starting Unified Deployment (Backend + Frontend)...
-[INFO] Starting deployment build for project 'bedrock-chatbot-deployment'...
-[SUCCESS] Deployment build started successfully. Build ID: bedrock-chatbot-deployment:abc123
-[INFO] Streaming deployment logs...
-[INFO] Monitoring build progress...
-```
-
-### Step 4.2: Build Phases
-
-The CodeBuild job executes these phases:
-
-**Install Phase:**
-- Installs Node.js 20
-- Installs AWS CDK CLI globally
-- Installs zip utility
-
-**Pre-Build Phase:**
-- Changes to backend directory
-- Installs backend npm dependencies
-- Bootstraps CDK for your account/region
-
-**Build Phase:**
-- Deploys CDK stack (`BedrockChatbotBackendStack`)
-- Extracts API Gateway URL and Cognito details
-- Creates frontend `.env.local` with backend configuration
-- Builds Next.js application
-- Creates deployment zip package
-
-**Post-Build Phase:**
-- Deploys frontend to Amplify
-- Completes deployment
-
-### Step 4.3: Wait for Deployment
-
-**This will take approximately 10-15 minutes.**
-
-You can also monitor the build in AWS Console:
-1. Go to **AWS CodeBuild Console**: https://console.aws.amazon.com/codesuite/codebuild/
-2. Click on project `bedrock-chatbot-deployment`
-3. Click on the running build
-4. Click **Tail logs** to see real-time output
-
-### Step 4.4: Deployment Complete
-
-When deployment succeeds, you'll see:
-
-```
-[INFO] Deployment build status: SUCCEEDED
-[SUCCESS] Complete deployment finished successfully!
-
-==========================================================================
-DEPLOYMENT SUMMARY
-==========================================================================
-
-Backend Infrastructure:
-   API Gateway URL: https://abc123xyz.execute-api.us-east-1.amazonaws.com
-   Knowledge Base ID: XXXXXXXXXX
-   User Pool ID: us-east-1_XXXXXXXXX
-   User Pool Client ID: XXXXXXXXXXXXXXXXXXXXXXXXXX
-   CDK Stack: BedrockChatbotBackendStack
-   AWS Region: us-east-1
-
-Frontend:
-   Amplify App ID: d1234abcdef
-   Frontend URL: https://main.d1234abcdef.amplifyapp.com
-
-What was deployed:
-   ✅ CDK backend infrastructure via CodeBuild
-   ✅ Amazon Bedrock Knowledge Base with S3 Vectors
-   ✅ Amazon Bedrock Agent with Nova 2 Lite model
-   ✅ API Gateway with Lambda functions
-   ✅ Cognito User Pool for authentication
-   ✅ S3 bucket for document storage
-   ✅ Frontend built and deployed to Amplify
-
-==========================================================================
-```
-
-### Step 4.5: Save Deployment Information
-
-**Copy and save these values** from the deployment summary:
-
-```bash
-API_GATEWAY_URL=<value>
-KNOWLEDGE_BASE_ID=<value>
-USER_POOL_ID=<value>
-USER_POOL_CLIENT_ID=<value>
-AMPLIFY_APP_ID=<value>
-FRONTEND_URL=<value>
-```
-
----
-
-## Post-Deployment Step 1: Create User Accounts
-
-After deployment, create user accounts through the AWS Console. No users are created automatically during deployment.
-
-### Create User via Console
-
-1. **Navigate to Amazon Cognito Console**
-   - Go to: https://console.aws.amazon.com/cognito/
-   - Ensure you're in the **us-east-1** region
-
-2. **Find Your User Pool**
-   - Click **User pools** in the left sidebar
-   - Look for `bedrock-chatbot-users-development`
-   - Click on the user pool name
-
-3. **Create User**
-   - Click **Users** tab → **Create user**
-   - Configure the following settings:
-
-   **Invitation message:**
-   - Select **"Don't send an invitation"**
-
-   **User name:**
-   - Enter a username (e.g., `testuser`) - *Required*
-
-   **Email address:**
-   - Enter a valid email address (e.g., `user@example.com`)
-   - ⚠️ **Important**: Check the box **"Mark email address as verified"**
-
-   **Temporary password:**
-   - Select **"Set a password"**
-   - Enter a temporary password (e.g., `TempPass123!`)
-   
-   - Click **Create user**
-
-4. **First Login - Password Change**
-   - When the user logs in for the first time with the temporary password, they will be prompted to set a new permanent password
-   - The application handles this automatically with a password change form
-   - Password requirements: 8+ characters, uppercase, lowercase, numbers, special characters
-
----
-
-## Post-Deployment Step 2: Upload Documents to Knowledge Base
-
-Upload documents for the chatbot to reference using the AWS Console.
-
-### Find Your S3 Bucket
-
-1. **Navigate to Amazon S3 Console**
-   - Go to: https://console.aws.amazon.com/s3/
-   - Ensure you're in the **us-east-1** region
-
-2. **Find the Document Bucket**
-   - Look for a bucket named `bedrock-chatbot-documents-development-<account-id>`
-   - Click on the bucket name to open it
-
-### Upload Documents
-
-1. **Navigate to the docs folder**
-   - Click on the `docs/` folder (create it if it doesn't exist by clicking **Create folder** → name it `docs` → click **Create folder**)
-
-2. **Upload Files**
-   - Click **Upload**
-   - Click **Add files** or drag and drop your documents
-   - Click **Upload** to start the upload
-
-**Supported file formats:**
-- PDF files (`.pdf`)
-- Word documents (`.docx`)
-- Text files (`.txt`)
-- Markdown files (`.md`)
-
----
-
-## Post-Deployment Step 3: Sync Knowledge Base
-
-After uploading documents, sync the Knowledge Base to process and index them.
-
-### Start Knowledge Base Sync
-
-1. **Navigate to Amazon Bedrock Console**
-   - Go to: https://console.aws.amazon.com/bedrock/
-   - Ensure you're in the **us-east-1** region
-
-2. **Find Your Knowledge Base**
-   - In the left sidebar, click **Build** → **Knowledge bases**
-   - Look for `bedrock-chatbot-kb-development`
-   - Click on the knowledge base name
-
-3. **Start Sync**
-   - Scroll down to the **Data source** section
-   - Select the data source `bedrock-chatbot-datasource-development`
-   - Click **Sync** button
-
-### Check Sync Status
-
-1. **Monitor Progress**
-   - The sync status will show as **Syncing** while processing
-   - Wait for the status to change to **Available** or **Ready**
-
-2. **View Sync Details**
-   - Click on the data source to see sync history
-   - Check the number of documents processed and any errors
-
-**Wait for sync to complete before testing the chatbot.**
-
----
-
-## Post-Deployment Step 4: Verify and Test
-
-### Verify Deployment Success
-
-1. **Frontend:** Access the Frontend URL from deployment summary (e.g., `https://main.d1234abcdef.amplifyapp.com`)
-
-2. **Cognito User Pool:** 
-   - Go to **Cognito Console** → **User pools**
-   - Verify `bedrock-chatbot-users-development` exists
-
-3. **S3 Bucket:** 
-   - Go to **S3 Console**
-   - Verify `bedrock-chatbot-documents-development-*` bucket exists
-   - Verify `docs/` folder contains your uploaded documents
-
-4. **Knowledge Base:** 
-   - Go to **Bedrock Console** → **Build** → **Knowledge bases**
-   - Verify `bedrock-chatbot-kb-development` shows status **Available**
-
-5. **API Gateway:**
-   - Go to **API Gateway Console**
-   - Verify `bedrock-chatbot-api-development` exists
-
-### Test the System
-
-1. Navigate to the **Frontend URL** (e.g., `https://main.d1234abcdef.amplifyapp.com`)
-2. You will be redirected to the **Login page**
-3. Log in with the user credentials you created in [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)
-   - If using a temporary password, you'll be prompted to set a new permanent password
-4. After login, you'll see the main page with a **red chat bubble** in the bottom-right corner
-5. Click the **chat bubble** to open the NASWA Assistant
-6. In the chat header, use the **language dropdown** to select English or Español
-7. Ask a question about your uploaded documents (or click a sample question)
-8. Verify the response includes source document attribution
-
----
-
-## Complete Deployment Reference
-
-### Resources Created
-
-| Resource | Name/ID |
-|----------|---------|
-| CDK Stack | `BedrockChatbotBackendStack` |
-| S3 Document Bucket | `bedrock-chatbot-documents-development-<account>` |
-| S3 Vector Bucket | `bedrock-chatbot-vectors-development-<account>` |
-| Knowledge Base | `bedrock-chatbot-kb-development` |
-| Lambda Function | `bedrock-chatbot-handler-development` |
-| API Gateway | `bedrock-chatbot-api-development` |
-| Cognito User Pool | `bedrock-chatbot-users-development` |
-| Amplify App | `BedrockChatbot` |
-| CodeBuild Project | `bedrock-chatbot-deployment` |
-| IAM Role | `bedrock-chatbot-service-role` |
-
-### Environment Variables in Lambda
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `MODEL_ARN` | `arn:aws:bedrock:us-east-1::inference-profile/global.amazon.nova-2-lite-v1:0` | Bedrock model inference profile |
-| `KNOWLEDGE_BASE_ID` | (from deployment) | Knowledge Base ID for RAG |
-| `GUARDRAIL_ID` | (from deployment) | Bedrock Guardrail ID for content filtering |
-| `GUARDRAIL_VERSION` | `DRAFT` | Guardrail version |
-| `MAX_TOKENS` | `1024` | Maximum tokens for response generation |
-| `TEMPERATURE` | `0.3` | Model temperature for response variability |
-
----
-
-## Troubleshooting
-
-### Issue: CodeBuild Fails with Permission Error
-
-**Error:** `User is not authorized to perform: iam:CreateRole`
-
-**Solution:**
-1. Ensure your AWS user has IAM permissions
-2. Check the IAM policy attached to your user/role
-3. Request admin to grant required permissions
-
-### Issue: Bedrock Model Access Denied
-
-**Error:** `AccessDeniedException: You don't have access to the model`
-
-**Solution:**
-As of October 2025, Amazon Nova models are automatically enabled. If you see this error:
-
-1. **Check IAM permissions** - Ensure your role has `bedrock:InvokeModel` permission
-2. **Verify region** - Ensure you're in us-east-1 where all services are available
-3. **Check the model ID** - Verify the model ID is correct: `global.amazon.nova-2-lite-v1:0`
-
-```bash
-# Test model access
-aws bedrock list-foundation-models \
-  --by-provider amazon \
-  --query 'modelSummaries[?contains(modelId, `nova`)]'
-```
-
-### Issue: S3 Vectors Not Available
-
-**Error:** `S3 Vectors service is not available in this region`
-
-**Solution:**
-This project only supports **us-east-1**. Redeploy in us-east-1:
-```bash
-# Switch to us-east-1 in AWS Console
-export AWS_REGION=us-east-1
-
-# If you deployed in wrong region, delete resources first
-aws cloudformation delete-stack --stack-name BedrockChatbotBackendStack --region <wrong-region>
-
-# Then redeploy in us-east-1
-./deploy.sh
-```
-
-### Issue: CDK Bootstrap Required
-
-**Error:** `This stack uses assets, so the toolkit stack must be deployed`
-
-**Solution:**
-The buildspec automatically bootstraps CDK. If it fails:
-```bash
-cd backend
-cdk bootstrap aws://<account-id>/<region>
-```
-
-### Issue: Amplify Deployment Fails
-
-**Error:** `Deployment failed with status: FAILED`
-
-**Solution:**
-1. Check CodeBuild logs for specific error
-2. Verify frontend builds locally:
    ```bash
-   cd frontend
-   npm install
-   npm run build
+   git clone https://github.com/ASUCICREPO/multilingual-RAG-chatbot.git
+   cd multilingual-RAG-chatbot
    ```
-3. Check for missing environment variables
 
-### Issue: Authentication Error - "No ID token received"
+5. Make the script executable and run it:
 
-**Error:** `Authentication error: Error: No ID token received from Cognito`
+   ```bash
+   chmod +x ./deploy.sh
+   ./deploy.sh
+   ```
 
-**Possible Causes:**
-1. User was created without email or email not verified
-2. User status is "Force change password" (expected - handled by frontend)
+6. **Wait** until the script exits. Do not close CloudShell while it is streaming logs. The script polls CodeBuild until the job finishes.
 
-**Solution:**
-1. Go to **Cognito Console** → **User pools** → `bedrock-chatbot-users-development`
-2. Click **Users** → select your user
-3. Verify the user has:
-   - Email address set
-   - Email marked as verified
-4. If you see the password change form on login, enter a new password meeting requirements
-5. If issues persist, delete and recreate the user following [Post-Deployment Step 1](#post-deployment-step-1-create-user-accounts)
+### Path B — Your own computer
 
-### Issue: Frontend Shows "Connection Issues"
+1. Install **AWS CLI v2** and **Git** if needed.
+2. Run `aws configure` and set **default region** to **`us-east-1`**.
+3. Run `aws sts get-caller-identity` and confirm it succeeds.
+4. Run the same **clone**, **chmod**, and **`./deploy.sh`** commands as in Path A, steps 4–6.
 
-**Possible Causes:**
-1. API Gateway URL not configured correctly
-2. CORS not allowing frontend origin
-3. Cognito settings incorrect
+### How you know it worked
 
-**Solution:**
-1. Open browser Developer Tools (F12) → **Network** tab → check for failed requests
-2. Go to **API Gateway Console** → find `bedrock-chatbot-api-development` → verify it exists
-3. Check browser console for CORS errors
-4. Go to **Cognito Console** → **User pools** → **App integration** → verify callback URLs
+- The script prints **`COMPLETE DEPLOYMENT SUCCESSFUL`** (or similar success summary) and a **DEPLOYMENT SUMMARY** block.
+- You should see at least: **API Gateway URL**, **Knowledge Base ID**, **User Pool ID**, **User Pool Client ID**, and a **Frontend URL** (Amplify, usually `https://main.<something>.amplifyapp.com`).
+- **Copy the frontend URL** — that is where you open the app later.
 
-### Issue: Knowledge Base Returns No Results
-
-**Possible Causes:**
-1. No documents uploaded
-2. Knowledge Base sync not complete
-3. Documents in wrong S3 folder
-
-**Solution:**
-1. Go to **S3 Console** → find `bedrock-chatbot-documents-development-*` bucket
-2. Verify documents are in the `docs/` folder (not root)
-3. Go to **Bedrock Console** → **Build** → **Knowledge bases** → `bedrock-chatbot-kb-development`
-4. Check the data source sync status is **Available**
-5. If needed, click **Sync** to re-sync the Knowledge Base
+If the script exits with an error, open the **CodeBuild** console → project **`bedrock-chatbot-deployment`** → select the failed build → **Tail logs** and read the last error lines.
 
 ---
 
-## Clean Up
+## After deployment (do these in order)
 
-To delete all resources:
+The deploy **does not** create login users. Until you add documents and sync, the bot has nothing to retrieve. Follow the order below.
+
+### 1. Create a sign-in user (Cognito)
+
+1. In the console (region **`us-east-1`**), open **Amazon Cognito** → **User pools**.
+2. Open the pool named **`bedrock-chatbot-users-development`** (name includes your stack’s environment suffix; if yours differs, pick the pool created by this project’s stack).
+3. Go to the **Users** tab → **Create user**.
+4. Choose a **username** and **email** (or follow your org’s process). If the app expects a verified email, enable **Mark email address as verified** when creating the user.
+5. Set an initial password or send an invitation per your policy. On first login, the app may ask for a **new password** — that is expected.
+
+You need this user before you can log in to the frontend URL from the deploy summary.
+
+### 2. Upload documents (S3)
+
+1. Open **Amazon S3** (region **`us-east-1`**).
+2. Open the **document** bucket for this stack. Its name looks like **`bedrock-chatbot-documents-development-<12-digit-account-id>`**.  
+   If you are unsure of the exact name, list stack outputs (see [Get stack output values](#get-stack-output-values) below) and use **`DocumentSourceBucketName`**.
+3. Open the **`docs/`** prefix (folder). Create **`docs`** if it does not exist.
+4. Upload your files (for example PDF, DOCX, TXT, MD) **into `docs/`**, not the bucket root.
+
+### 3. Sync the knowledge base (Bedrock)
+
+Indexing only happens after you start a sync (or ingestion job).
+
+**Option A — Console**
+
+1. Open **Amazon Bedrock** → **Build** → **Knowledge bases** (region **`us-east-1`**).
+2. Open **`bedrock-chatbot-kb-development`** (or the KB name from your stack if different).
+3. Under **Data source**, select the data source for this stack, then choose **Sync** (wording may be **Start ingestion** / **Sync** depending on console version).
+4. Wait until the job shows **Complete** / **Ready** / **Available** — not **In progress**.
+
+**Option B — AWS CLI** (same region)
+
+Replace placeholders using outputs from the next section:
 
 ```bash
-# Run the cleanup script
+KB_ID="<KnowledgeBaseId-from-output>"
+DS_ID="<DataSourceId-from-output>"
+
+aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id "$KB_ID" \
+  --data-source-id "$DS_ID" \
+  --region us-east-1
+```
+
+### 4. Open the app and test
+
+1. In a browser, go to the **frontend URL** from the deploy summary (for example `https://main.<app-id>.amplifyapp.com`).
+2. Log in with the Cognito user from step 1.
+3. Ask a question that should be answered from your uploaded documents.
+
+---
+
+## Get stack output values
+
+If you lost the printed summary, list CloudFormation outputs for the stack **`BedrockChatbotBackendStack`**:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name BedrockChatbotBackendStack \
+  --region us-east-1 \
+  --query "Stacks[0].Outputs[].[OutputKey,OutputValue]" \
+  --output table
+```
+
+Use **`DocumentSourceBucketName`**, **`KnowledgeBaseId`**, **`DataSourceId`**, **`HttpApiUrl`**, **`UserPoolId`**, and **`UserPoolClientId`** as needed.
+
+---
+
+## Optional: deploy without CodeBuild
+
+Only use this if you cannot use `deploy.sh` / CodeBuild. You must install **AWS CLI v2**, **Node.js** (versions consistent with `backend/package.json` and `buildspec.yml`), and the **AWS CDK CLI**, then deploy the CDK stack and build/deploy the frontend yourself (for example `cd backend && npm ci && cdk deploy`, then build the frontend with `NEXT_PUBLIC_*` env vars from stack outputs and publish to Amplify). This is easy to misconfigure; **prefer the CodeBuild path above.**
+
+---
+
+## Remove everything
+
+From a clone of the repo, with AWS CLI configured for **`us-east-1`**:
+
+```bash
 chmod +x ./cleanup.sh
 ./cleanup.sh
 ```
 
-Or manually:
-
-```bash
-# Delete CDK stack (this deletes most resources)
-cd backend
-cdk destroy
-
-# Delete Amplify app
-aws amplify delete-app --app-id <your-app-id>
-
-# Delete CodeBuild project
-aws codebuild delete-project --name bedrock-chatbot-deployment
-
-# Delete IAM role
-aws iam delete-role-policy --role-name bedrock-chatbot-service-role --policy-name DeploymentPolicy
-aws iam delete-role --role-name bedrock-chatbot-service-role
-```
-
 ---
 
-## Support
+## Quick fixes
 
-For issues or questions:
+| Problem | What to try |
+|--------|-------------|
+| `iam:CreateRole` or similar denied | Your IAM identity needs permission to create roles and manage CloudFormation in this account. |
+| Wrong region | Deploy only in **`us-east-1`**. |
+| Model / Bedrock errors | Confirm **[Prerequisites](./prerequisites.md)** and Bedrock access in **`us-east-1`**. |
+| Empty or irrelevant answers | Files must be under **`docs/`**, then **Sync** the knowledge base (step 3). |
+| Cannot log in | User must exist in the correct user pool; complete **new password** flow if prompted; verify email if your pool requires it. |
 
-- Check the [Architecture Deep Dive](./architectureDeepDive.md) for technical details
-- Review the [User Guide](./userGuide.md) for frontend usage
-- Check CloudWatch Logs for detailed error messages:
-  ```bash
-  aws logs tail /aws/lambda/bedrock-chatbot-handler-development --follow
-  ```
-
----
-
-**Deployment Complete!** Your Multilingual RAG Chatbot is now ready to use.
+More detail: **[Architecture](./architectureDeepDive.md)**, **[User Guide](./userGuide.md)**, **[API](./apiDoc.md)**.
