@@ -19,6 +19,7 @@ An AI-powered multilingual chatbot platform for the National Association of Stat
 | Prerequisites         | [Prerequisites](docs/prerequisites.md)                |
 | User Flow             | [User Flow](docs/userGuide.md)                        |
 | Deployment            | [Deployment](docs/deploymentGuide.md)                 |
+| Embed chat widget     | [Chat embed guide](docs/chatEmbedGuide.md)            |
 | Credits               | [Credits](#credits)                                   |
 | License               | [License](#license)                                   |
 
@@ -159,6 +160,7 @@ For a detailed overview of the application infrastructure, see [docs/architectur
 - **[Deployment Guide](docs/deploymentGuide.md)** - Deploy with CodeBuild (`deploy.sh`) and post-deploy steps
 - **[User Guide](docs/userGuide.md)** - Frontend usage and features
 - **[API Documentation](docs/apiDoc.md)** - Backend API reference
+- **[Chat embed guide](docs/chatEmbedGuide.md)** - Use the floating chat UI on another website (React, iframe, or custom client)
 
 ## Project Structure
 
@@ -191,7 +193,7 @@ multilingual-RAG-chatbot/
 │   ├── next.config.js         # Next.js configuration
 │   ├── tailwind.config.js     # Tailwind CSS configuration
 │   └── package.json           # Frontend dependencies
-├── docs/                      # Documentation
+├── docs/                      # Documentation (incl. chatEmbedGuide.md)
 ├── deploy.sh                  # Automated deployment script
 ├── cleanup.sh                 # Resource cleanup script
 ├── buildspec.yml              # CodeBuild specification
