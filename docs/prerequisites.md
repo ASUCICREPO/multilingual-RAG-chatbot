@@ -279,7 +279,7 @@ For questions or issues with prerequisites:
 - **AWS Services**: Contact [AWS Support](https://aws.amazon.com/support/) or consult [AWS Documentation](https://docs.aws.amazon.com/)
 - **Bedrock Access**: Check [Bedrock Model Access Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)
 - **S3 Vectors**: Check [S3 Vectors Documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors.html)
-- **Deployment Issues**: Refer to the [Deployment Guide](./deploymentGuide.md) troubleshooting section
+- **Deployment Issues**: See [Deployment Guide → Quick fixes](./deploymentGuide.md#quick-fixes)
 
 ---
 

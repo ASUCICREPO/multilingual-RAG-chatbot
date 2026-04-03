@@ -22,6 +22,29 @@ An AI-powered multilingual chatbot platform for the National Association of Stat
 | Credits               | [Credits](#credits)                                   |
 | License               | [License](#license)                                   |
 
+## Disclaimers
+Customers are responsible for making their own independent assessment of the information in this document.
+
+This document:
+
+(a) is for informational purposes only,
+
+(b) references AWS product offerings and practices, which are subject to change without notice,
+
+(c) does not create any commitments or assurances from AWS and its affiliates, suppliers or licensors. AWS products or services are provided "as is" without warranties, representations, or conditions of any kind, whether express or implied. The responsibilities and liabilities of AWS to its customers are controlled by AWS agreements, and this document is not part of, nor does it modify, any agreement between AWS and its customers, and
+
+(d) is not to be considered a recommendation or viewpoint of AWS.
+
+Additionally, you are solely responsible for testing, security and optimizing all code and assets on GitHub repo, and all such code and assets should be considered:
+
+(a) as-is and without warranties or representations of any kind,
+
+(b) not suitable for production environments, or on production or other critical data, and
+
+(c) to include shortcuts in order to support rapid prototyping such as, but not limited to, relaxed authentication and authorization and a lack of strict adherence to security best practices.
+
+All work produced is open source. More information can be found in the GitHub repo.
+
 ## Overview
 
 This application combines AI-powered document processing with intelligent retrieval and multilingual support to deliver comprehensive workforce assistance. Built on a serverless architecture with RAG capabilities, Cognito authentication, and a modern responsive web interface.
@@ -73,39 +96,42 @@ For a detailed overview of the user journey and application workflow, see [docs/
 
 ## Deployment
 
-### Prerequisites
+**Region:** **`us-east-1` only.** Read [docs/prerequisites.md](docs/prerequisites.md) for permissions and Bedrock access before you deploy.
 
-- **AWS CLI** - Install from [aws.amazon.com/cli](https://aws.amazon.com/cli/)
-- **AWS Account** - With permissions to create IAM, Lambda, S3, Cognito, Amplify, and Bedrock resources
-- **Git** - For cloning the repository
+### What you are running
 
-For detailed prerequisites, see [docs/prerequisites.md](docs/prerequisites.md).
+`./deploy.sh` uses the **AWS CLI** to set up **CodeBuild**, then starts a build. **CodeBuild** (in AWS) runs the CDK deploy and the frontend build—you do **not** need Node.js or the CDK on your laptop for that path.
 
-### Quick Start
+### What you need on the machine where you type commands
 
-⚠️ **Region Requirement**: This project only supports **us-east-1** (US East - N. Virginia).
+| Where you run the script | Install |
+|--------------------------|---------|
+| **[AWS CloudShell](https://docs.aws.amazon.com/cloudshell/latest/userguide/welcome.html)** in the console (**region `us-east-1`**) | Nothing extra — **AWS CLI** and **Git** are already there (**use this if unsure**) |
+| Your own computer | **[AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)** (`aws configure`, default region **`us-east-1`**) and **Git** |
 
-```bash
-# Configure AWS CLI
-aws configure
-# Enter: Access Key, Secret Key, Region: us-east-1, Output: json
+Without **AWS CLI** and **Git**, you cannot run the steps below as written.
 
-# Clone the repository
-git clone https://github.com/ASUCICREPO/multilingual-RAG-chatbot.git
-cd multilingual-RAG-chatbot
+### Deploy (main path)
 
-# Run the automated deployment
-./deploy.sh
-```
+1. Open the **AWS Console**, set the region to **`us-east-1`**.
+2. Open **CloudShell** (terminal icon) 
+3. Confirm the CLI works: `aws sts get-caller-identity` (should print your account).
+4. Clone the repo, run the script, and wait until it finishes (do not close the session while it runs):
 
-The deployment script will:
-1. Create IAM service roles
-2. Deploy CDK backend infrastructure
-3. Build and deploy the frontend to Amplify
-4. Configure Cognito authentication
-5. Output all necessary URLs and configuration details
+   ```bash
+   git clone https://github.com/ASUCICREPO/multilingual-RAG-chatbot.git
+   cd multilingual-RAG-chatbot
+   chmod +x ./deploy.sh
+   ./deploy.sh
+   ```
 
-For detailed deployment instructions, including prerequisites and step-by-step guides, see [docs/deploymentGuide.md](docs/deploymentGuide.md).
+5. **Success:** the script prints a deployment summary with a **frontend URL** (Amplify). Copy that URL—that is the app.
+
+### After that
+
+Deploy does **not** create login users or load your documents. In order: create a **Cognito** user, upload files to the stack’s S3 **`docs/`** folder, run a **Knowledge base sync** in Bedrock, then open the frontend URL and sign in.
+
+Step-by-step (including stack output commands and troubleshooting): **[docs/deploymentGuide.md](docs/deploymentGuide.md)**.
 
 ## Infrastructure
 
@@ -130,7 +156,7 @@ For a detailed overview of the application infrastructure, see [docs/architectur
 
 - **[Architecture Deep Dive](docs/architectureDeepDive.md)** - Comprehensive architecture documentation
 - **[Prerequisites](docs/prerequisites.md)** - Required tools and AWS permissions
-- **[Deployment Guide](docs/deploymentGuide.md)** - Step-by-step deployment instructions
+- **[Deployment Guide](docs/deploymentGuide.md)** - Deploy with CodeBuild (`deploy.sh`) and post-deploy steps
 - **[User Guide](docs/userGuide.md)** - Frontend usage and features
 - **[API Documentation](docs/apiDoc.md)** - Backend API reference
 
@@ -174,7 +200,7 @@ multilingual-RAG-chatbot/
 
 ## Credits
 
-This application was architected and developed by [Sahajpreet Singh](https://www.linkedin.com/in/sahajpreet/), [Apoorv Singh](https://www.linkedin.com/in/apoorv16/), and [Lahari Shakthi Arun](https://www.linkedin.com/in/shakthiarun22/) with solutions architect [Arun Arunachalam](https://www.linkedin.com/in/arunarunachalam/), program manager [Thomas Orr](https://www.linkedin.com/in/thomas-orr/) and product manager [Rachel Hayden](https://www.linkedin.com/in/rachelhayden/). Thanks to the ASU Cloud Innovation Center Technical for their guidance and support.
+This application was architected and developed by [Sahajpreet Singh Khasria](https://www.linkedin.com/in/sahajpreet/), [Apoorv Singh](https://www.linkedin.com/in/apoorv16/), and [Lahari Shakthi Arun](https://www.linkedin.com/in/shakthiarun22/) with solutions architect [Arun Arunachalam](https://www.linkedin.com/in/arunarunachalam/), program manager [Tom Orr](https://www.linkedin.com/in/thomas-orr/) and product manager [Rachel Hayden](https://www.linkedin.com/in/rachelhayden/). Thanks to the ASU Cloud Innovation Center Technical for their guidance and support.
 
 ## License
 

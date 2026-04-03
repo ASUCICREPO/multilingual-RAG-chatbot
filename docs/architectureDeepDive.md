@@ -35,7 +35,8 @@ The Lambda builds an intelligent prompt combining:
 ### 7. Model Invocation
 The Lambda invokes Amazon Bedrock with the Nova 2 Lite model:
 - Sends the constructed RAG prompt
-- Configures inference parameters (512 max tokens, 0.5 temperature)
+- Configures inference parameters (1024 max tokens, 0.3 temperature)
+- Applies Bedrock Guardrails for content filtering
 - Receives streaming response with generated text
 
 ### 8. Response Processing
@@ -62,9 +63,8 @@ When users click "View" on a source document, the frontend calls the `/document`
   - Cosine similarity distance metric for semantic search
   - Metadata configuration for Bedrock integration
 
-- **AWS Lambda Functions**:
-  - **agent-handler** - Main chat handler with RAG pipeline, document retrieval, and conversation memory
-  - **health-check** - Simple health endpoint for monitoring
+- **AWS Lambda Function**:
+  - **agent-handler** - Main handler with RAG pipeline, document retrieval, health check, and conversation memory (single Lambda handles all endpoints)
 
 - **Amazon Bedrock Knowledge Base**: RAG document indexing and retrieval
   - Configured with Nova Multimodal Embeddings (3072 dimensions)
@@ -78,8 +78,14 @@ When users click "View" on a source document, the frontend calls the `/document`
 
 - **Amazon Bedrock (Nova 2 Lite)**: Large Language Model for AI responses
   - Global inference profile for optimal routing
-  - Configured with controlled temperature (0.5) for balanced responses
+  - Configured with controlled temperature (0.3) for balanced responses
   - Supports both conversational and technical response modes
+
+- **Amazon Bedrock Guardrails**: Content moderation and safety
+  - Content filtering (HATE, INSULTS, SEXUAL, VIOLENCE, MISCONDUCT, PROMPT_ATTACK at HIGH strength)
+  - Topic denial policies (Politics, Off-Topic-General-Knowledge, Personal-Assistance)
+  - Word policy with profanity blocking
+  - Custom blocked messages for off-topic queries
 
 - **Amazon Bedrock (Nova Multimodal Embeddings)**: Embedding model
   - 3072-dimensional embeddings for semantic search
@@ -93,6 +99,7 @@ When users click "View" on a source document, the frontend calls the `/document`
 
 - **Amazon Cognito User Pool**: User authentication and authorization
   - Email-based sign-in with auto-verification
+  - Self sign-up enabled for user registration
   - Strong password policy (8+ chars, mixed case, digits, symbols)
   - Optional MFA (SMS, OTP)
   - OAuth 2.0 with authorization code grant flow
@@ -159,23 +166,21 @@ The CDK approach enables:
 
 ## RAG Pipeline Architecture
 
-The system uses a **RAG (Retrieval Augmented Generation) architecture** with intelligent components:
+The system uses a **RAG (Retrieval Augmented Generation) architecture** with Bedrock's RetrieveAndGenerate API:
 
-### Conversation Memory Manager
-- Maintains in-memory cache of conversation history per session
-- Stores last 5 user-assistant exchanges
-- Provides formatted context string for prompts
-- Supports conversation continuity across messages
+### Knowledge Base Integration
+- Uses Bedrock `RetrieveAndGenerate` API for unified retrieval and generation
+- Automatic session management for conversation continuity
+- Integrated guardrails for content filtering
 
 ### Knowledge Base Retriever
 - Invokes Bedrock Agent Runtime retrieve API
-- Configures vector search with 5 result limit
+- Configures vector search with result limit
 - Extracts content, score, and S3 location from results
 - Handles retrieval errors gracefully
 
 ### RAG Prompt Builder
 - Constructs language-aware system instructions
-- Injects conversation context from memory
 - Formats retrieved documents with source attribution
 - Adds response type markers for post-processing
 - Supports both conversational and technical response modes
@@ -188,8 +193,7 @@ The system uses a **RAG (Retrieval Augmented Generation) architecture** with int
 - Conditionally includes sources (technical only)
 
 ### Document Handler
-- Parses S3 URIs from document paths
-- Retrieves documents from S3 bucket
+- Generates pre-signed S3 URLs for document access
 - Sets appropriate Content-Type headers
 - Configures Content-Disposition for PDFs (view) vs. other files (download)
 
@@ -207,10 +211,10 @@ The system uses a **RAG (Retrieval Augmented Generation) architecture** with int
 ## Scalability & Performance
 
 - **Serverless Architecture**: Automatically scales with demand, no server management
-- **Lambda Configuration**: 512 MB memory, 30-second timeout for model inference
+- **Lambda Configuration**: 512 MB memory, 60-second timeout for model inference
 - **Knowledge Base Optimization**: Fixed-size chunking (512 tokens) with 20% overlap for context preservation
 - **S3 Vectors**: Purpose-built vector storage with optimized similarity search
-- **Conversation Memory**: In-memory caching for Lambda container reuse
+- **Conversation Memory**: Bedrock session management for conversation continuity
 - **Response Streaming**: Configurable for real-time response delivery
 - **Lifecycle Rules**: Automatic transition to S3 IA after 30 days for cost optimization
 
